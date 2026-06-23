@@ -1,0 +1,7 @@
+sentence-transformers
+numpy
+pandas
+scikit-learn
+rank-bm25
+tqdm
+einops
