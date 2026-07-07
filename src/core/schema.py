@@ -7,6 +7,7 @@ from typing import Any, Literal, TypeAlias
 
 
 DatasetName: TypeAlias = Literal["apache", "openstack", "hdfs"]
+LogDatasetName: TypeAlias = Literal["apache", "openstack", "hdfs", "online"]
 Language: TypeAlias = Literal["vi", "en"]
 QueryLevel: TypeAlias = Literal["easy", "medium", "hard"]
 Category: TypeAlias = Literal[
@@ -34,6 +35,7 @@ LabelSource: TypeAlias = Literal[
 ]
 
 DATASETS: tuple[str, ...] = ("apache", "openstack", "hdfs")
+LOG_DATASETS: tuple[str, ...] = (*DATASETS, "online")
 LANGUAGES: tuple[str, ...] = ("vi", "en")
 QUERY_LEVELS: tuple[str, ...] = ("easy", "medium", "hard")
 CATEGORIES: tuple[str, ...] = (
@@ -144,6 +146,13 @@ def validate_dataset(dataset: str) -> DatasetName:
             f"Unknown dataset '{dataset}'. Expected one of: {', '.join(DATASETS)}"
         )
     return dataset  # type: ignore[return-value]
+
+
+def validate_log_dataset(dataset: str) -> LogDatasetName:
+    cleaned = dataset.strip()
+    if not cleaned:
+        raise SchemaValidationError("dataset is required")
+    return cleaned  # type: ignore[return-value]
 
 
 def _require_keys(record: dict[str, Any], required_keys: set[str], name: str) -> None:

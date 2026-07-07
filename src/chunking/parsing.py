@@ -23,6 +23,11 @@ HTTP_STATUS_RE = re.compile(r"\bstatus:\s*(?P<status>\d{3})\b", re.IGNORECASE)
 RESPONSE_LEN_RE = re.compile(r"\blen:\s*(?P<length>\d+)\b", re.IGNORECASE)
 TIME_SECONDS_RE = re.compile(r"\btime:\s*(?P<seconds>\d+(?:\.\d+)?)\b", re.IGNORECASE)
 TOOK_SECONDS_RE = re.compile(r"\btook\s+(?P<seconds>\d+(?:\.\d+)?)\s+seconds?\b", re.IGNORECASE)
+ERROR_STATE_RE = re.compile(r"\berror state\s+(?P<code>-?\d+)\b", re.IGNORECASE)
+ERROR_CODE_RE = re.compile(r"\berror code\s+(?P<code>-?\d+)\b", re.IGNORECASE)
+EXIT_CODE_RE = re.compile(r"\bexit code\s+(?P<code>-?\d+)\b", re.IGNORECASE)
+RETRY_COUNT_RE = re.compile(r"\bretry\s+(?P<count>\d+)\b", re.IGNORECASE)
+PORT_RE = re.compile(r"\bport\s+(?P<port>\d{2,5})\b", re.IGNORECASE)
 SOURCE_LOG_RE = re.compile(r"^(?P<source_log>\S+\.log(?:\.\S+)?)\s+\d{4}-\d{2}-\d{2}\s+")
 PATH_RE = re.compile(r"(?<!\w)/(?:[A-Za-z0-9._@%+=:,~-]+/)*[A-Za-z0-9._@%+=:,~-]+")
 NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])")
@@ -103,6 +108,23 @@ def normalize_http_request(match: re.Match[str]) -> str:
     return f'"{method} route:{route} HTTP/<version>"'
 
 
+def bucket_http_status(match: re.Match[str]) -> str:
+    status = int(match.group("status"))
+    return f"status: <status_{status // 100}xx>"
+
+
+def bucket_time_duration(match: re.Match[str]) -> str:
+    seconds = float(match.group("seconds"))
+    bucket = "duration_slow" if seconds >= 5 else "duration_normal"
+    return f"time: <{bucket}>"
+
+
+def bucket_took_duration(match: re.Match[str]) -> str:
+    seconds = float(match.group("seconds"))
+    bucket = "duration_slow" if seconds >= 5 else "duration_normal"
+    return f"took <{bucket}> seconds"
+
+
 def parse_http(text: str) -> dict[str, Any]:
     match = HTTP_RE.search(text)
     if not match:
@@ -156,13 +178,35 @@ def normalize_template(text: str) -> str:
     template = UUID_RE.sub("<uuid>", template)
     template = HEX_ID_RE.sub("<hex_id>", template)
     template = PATH_RE.sub("<path>", template)
-    template = HTTP_STATUS_RE.sub("status: <status>", template)
+    template = HTTP_STATUS_RE.sub(bucket_http_status, template)
     template = RESPONSE_LEN_RE.sub("len: <len>", template)
-    template = TIME_SECONDS_RE.sub("time: <duration>", template)
-    template = TOOK_SECONDS_RE.sub("took <duration> seconds", template)
+    template = TIME_SECONDS_RE.sub(bucket_time_duration, template)
+    template = TOOK_SECONDS_RE.sub(bucket_took_duration, template)
+    template = ERROR_STATE_RE.sub("error state <state_code>", template)
+    template = ERROR_CODE_RE.sub("error code <error_code>", template)
+    template = EXIT_CODE_RE.sub("exit code <exit_code>", template)
+    template = RETRY_COUNT_RE.sub("retry <retry_count>", template)
+    template = PORT_RE.sub("port <port>", template)
     template = NUMBER_RE.sub("<num>", template)
     template = BLOCK_ID_LIST_RE.sub("<block_id_list>", template)
     return normalize_space(template)
+
+
+def sanitize_message_for_embedding(text: str, *, max_length: int = 240) -> str:
+    message = HTTP_RE.sub(normalize_http_request, text)
+    message = REQ_ID_RE.sub("<req_id>", message)
+    message = INSTANCE_RE.sub("[instance: <instance_id>]", message)
+    message = INSTANCE_WORD_RE.sub("instance <instance_id>", message)
+    message = BLOCK_ID_RE.sub("<block_id>", message)
+    message = IP_PORT_RE.sub("<ip_port>", message)
+    message = IP_RE.sub("<ip>", message)
+    message = UUID_RE.sub("<uuid>", message)
+    message = HEX_ID_RE.sub("<hex_id>", message)
+    message = PATH_RE.sub("<path>", message)
+    message = normalize_space(message)
+    if len(message) <= max_length:
+        return message
+    return message[: max_length - 3].rstrip() + "..."
 
 
 def infer_task_state(message: str) -> str | None:
