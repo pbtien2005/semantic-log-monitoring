@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from src.retrieval.milvus_search import RetrievalConfig, execute_plan
+from src.retrieval.pending_template_registry import PendingTemplateRegistry
 from src.retrieval.query_plan import RetrievalPlan, SortSpec
 from src.retrieval.template_registry import TemplateRegistry
 
@@ -385,6 +386,46 @@ class FilteredRetrievalPipelineTests(unittest.TestCase):
         self.assertFalse(plan.applied_template_filter)
         self.assertIn('dataset == "payment-prod"', client.search_calls[0]["filter"])
         self.assertNotIn("template_id in", client.search_calls[0]["filter"])
+
+    def test_pending_template_candidate_is_searchable_and_filters_logs_by_candidate_id(self) -> None:
+        candidate_id = "template::payment-prod::checkout"
+        client = RecordingClient(search_batches=[[runtime_hit("payment-log-1")]])
+        plan = RetrievalPlan(
+            raw_query="checkout failed request",
+            normalized_query="checkout failed request",
+            semantic_query="checkout failed request",
+            dataset="payment-prod",
+            top_k=1,
+        )
+        pending_registry = PendingTemplateRegistry.from_records(
+            [
+                {
+                    "candidate_id": candidate_id,
+                    "dataset": "payment-prod",
+                    "template": "checkout failed for request <req_id>",
+                    "draft_regex": r"^checkout failed for request (?P<request_id>req-\S+)$",
+                    "occurrences": 7,
+                    "status": "pending",
+                    "searchable": True,
+                }
+            ]
+        )
+
+        response = execute_plan(
+            client=client,
+            model=FakeModel(),
+            plan=plan,
+            template_registry=None,
+            pending_template_registry=pending_registry,
+            config=RetrievalConfig(min_template_score=0.05, min_template_score_gap=0.0),
+        )
+
+        self.assertIn(f'payload["candidate_id"] == "{candidate_id}"', client.search_calls[0]["filter"])
+        self.assertEqual(plan.candidate_template_ids, [candidate_id])
+        self.assertTrue(plan.applied_template_filter)
+        self.assertEqual(response.templates[0].primary_id, candidate_id)
+        self.assertEqual(response.templates[0].source, "pending_template_registry")
+        self.assertEqual(response.templates[0].entity["payload"]["status"], "pending")
 
 
 if __name__ == "__main__":

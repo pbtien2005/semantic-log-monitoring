@@ -32,13 +32,13 @@ def log_result_to_context(result: RetrievalResult) -> dict[str, Any]:
             "level": result.entity.get("level"),
             "component": result.entity.get("component"),
             "template_id": result.entity.get("template_id") or payload.get("template_id"),
+            "candidate_id": payload.get("candidate_id"),
             "score": result.score,
             "semantic_score": result.semantic_score,
             "source": result.source,
             "raw_log": payload.get("raw_log"),
             "message": payload.get("message"),
             "template": payload.get("template"),
-            "signals": payload.get("signals"),
             "line_number": payload.get("line_number"),
             "source_file": payload.get("source_file"),
             "source_log": payload.get("source_log"),
@@ -57,6 +57,7 @@ def template_result_to_context(result: RetrievalResult) -> dict[str, Any]:
     return compact_dict(
         {
             "template_id": result.primary_id,
+            "candidate_id": result.entity.get("candidate_id") or payload.get("candidate_id"),
             "dataset": result.entity.get("dataset"),
             "level": result.entity.get("level"),
             "component": result.entity.get("component"),
@@ -64,8 +65,10 @@ def template_result_to_context(result: RetrievalResult) -> dict[str, Any]:
             "score": result.score,
             "semantic_score": result.semantic_score,
             "source": result.source,
+            "status": payload.get("status"),
+            "searchable": payload.get("searchable"),
             "template": payload.get("template"),
-            "signals": payload.get("signals"),
+            "draft_regex": payload.get("draft_regex"),
             "entities": payload.get("entities"),
             "sample_log_ids": payload.get("sample_log_ids"),
             "sample_messages": payload.get("sample_messages"),
@@ -101,13 +104,15 @@ def build_template_refs(
             {
                 "template_ref": ref,
                 "template_id": template_id,
+                "candidate_id": (template or {}).get("candidate_id"),
                 "dataset": (template or {}).get("dataset"),
                 "level": (template or {}).get("level"),
                 "component": (template or {}).get("component"),
                 "occurrences": (template or {}).get("occurrences"),
                 "score": (template or {}).get("score"),
+                "source": (template or {}).get("source"),
+                "status": (template or {}).get("status"),
                 "template": (template or {}).get("template"),
-                "signals": (template or {}).get("signals"),
                 "sample_messages": (template or {}).get("sample_messages"),
             }
         )
@@ -123,7 +128,6 @@ def build_template_refs(
                 "level": log.get("level"),
                 "component": log.get("component"),
                 "template": log.get("template"),
-                "signals": log.get("signals"),
             },
         )
     return refs, template_map
@@ -205,9 +209,6 @@ def format_context_for_prompt(context: dict[str, Any]) -> str:
                 f"| occurrences={template.get('occurrences')}"
             )
             lines.append(f"template={template.get('template')}")
-            signals = template.get("signals")
-            if signals:
-                lines.append(f"signals={signals}")
     else:
         lines.append("none")
 

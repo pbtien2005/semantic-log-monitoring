@@ -13,7 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[3]))
 from src.core.schema import DATASETS
 from src.retrieval.context_builder import build_retrieval_context
 from src.retrieval.milvus_search import DEFAULT_MODEL, DEFAULT_URI, execute_plan
-from src.retrieval.query_planner import DEFAULT_LLM_BASE_URL, DEFAULT_LLM_MODEL, PlannerOptions, plan_query
+from src.retrieval.query_planner import PlannerOptions, plan_query
 from src.retrieval.template_registry import TemplateRegistry
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -36,9 +36,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=24)
     parser.add_argument("--template-k", type=int, default=8)
     parser.add_argument("--no-templates", action="store_true")
-    parser.add_argument("--use-llm", action="store_true")
-    parser.add_argument("--planner-model", default=DEFAULT_LLM_MODEL)
-    parser.add_argument("--planner-base-url", default=DEFAULT_LLM_BASE_URL)
     parser.add_argument("--uri", default=DEFAULT_URI)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     return parser.parse_args()
@@ -51,9 +48,6 @@ def main() -> None:
         level=args.level,
         component=args.component,
         top_k=args.top_k,
-        use_llm=args.use_llm,
-        llm_model=args.planner_model,
-        llm_base_url=args.planner_base_url,
     )
     plan = plan_query(args.query, options)
     milvus_client, sentence_transformer = load_dependencies()

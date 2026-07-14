@@ -4,13 +4,51 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
-from src.retrieval.query_entities import extract_query_entities
+from src.retrieval.milvus_filters import (
+    STRONG_ENTITY_FILTERS as STRONG_ENTITY_FILTERS,
+    build_candidate_filter,
+    build_candidate_filters,
+    build_entity_filter,
+    build_filter,
+    build_log_payload_filter as build_log_payload_filter,
+    build_template_filter,
+    build_time_filter,
+    combine_filters,
+    has_strong_entity_filter as has_strong_entity_filter,
+    quote_expr as quote_expr,
+    should_apply_template_filter as should_apply_template_filter,
+)
+from src.retrieval.milvus_models import (
+    RetrievalConfig as RetrievalConfig,
+    RetrievalResponse as RetrievalResponse,
+    RetrievalResult as RetrievalResult,
+)
+from src.retrieval.milvus_ranking import (
+    cap_logs_per_template as cap_logs_per_template,
+    is_temporal_sort as is_temporal_sort,
+    merge_results as merge_results,
+    normalize_semantic_score as normalize_semantic_score,
+    occurrence_bonus as occurrence_bonus,
+    rerank_and_cap_lines as rerank_and_cap_lines,
+    rerank_template_child_lines as rerank_template_child_lines,
+    rerank_template_group as rerank_template_group,
+    rerank_templates as rerank_templates,
+    result_payload_template_id as result_payload_template_id,
+    result_timestamp_ms as result_timestamp_ms,
+    source_boost as source_boost,
+    template_group_key as template_group_key,
+    template_score_map as template_score_map,
+)
 from src.retrieval.query_plan import RetrievalPlan
+from src.retrieval.pending_template_registry import (
+    PendingTemplateHit,
+    PendingTemplateRecord,
+    PendingTemplateRegistry,
+)
 from src.retrieval.template_registry import TemplateHit, TemplateRegistry
 
 
@@ -18,127 +56,6 @@ DEFAULT_URI = os.getenv("MILVUS_URI", "http://localhost:19530")
 DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
 LOG_LINE_COLLECTION = "log_line"
 SEARCH_PARAMS = {"metric_type": "COSINE", "params": {}}
-
-@dataclass(slots=True)
-class RetrievalResult:
-    collection: str
-    primary_id: str
-    score: float
-    semantic_score: float
-    entity: dict[str, Any]
-    source: str
-
-
-@dataclass(slots=True)
-class RetrievalResponse:
-    mode: str
-    filter_expr: str
-    log_lines: list[RetrievalResult]
-    templates: list[RetrievalResult]
-
-
-@dataclass(slots=True)
-class RetrievalConfig:
-    template_k: int = 8
-    candidate_per_template: int = 10
-    logs_per_template: int = 3
-    final_top_k: int = 24
-    group_by_field: str | None = "template_id"
-    strict_group_size: bool = False
-    max_template_ids_for_filter: int = 20
-    min_template_score: float | None = None
-    min_template_score_gap: float = 0.0
-    min_results_with_template_filter: int = 2
-    vector_search_k: int = 50
-    template_child_multiplier: int = 3
-    template_first_direct_min: int = 2
-    template_first_direct_ratio: float = 0.5
-    child_line_weight: float = 0.65
-    parent_template_weight: float = 0.35
-    semantic_weight: float = 0.85
-    recency_weight: float = 0.15
-    enable_recency_rerank: bool = True
-    per_template_search: bool = True
-    temporal_query_limit: int = 10000
-
-
-def quote_expr(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def build_filter(
-    *,
-    dataset: str | None = None,
-    level: str | None = None,
-    component: str | None = None,
-    template_ids: list[str] | None = None,
-) -> str:
-    clauses = []
-    if dataset:
-        clauses.append(f"dataset == {quote_expr(dataset)}")
-    if level:
-        clauses.append(f"level == {quote_expr(level)}")
-    if component:
-        clauses.append(f"component == {quote_expr(component)}")
-    if template_ids:
-        quoted = ", ".join(quote_expr(template_id) for template_id in template_ids)
-        clauses.append(f"template_id in [{quoted}]")
-    return " and ".join(clauses)
-
-
-def build_template_filter(template_ids: list[str]) -> str:
-    return build_filter(template_ids=template_ids)
-
-
-def build_log_payload_filter(query: str) -> str:
-    return build_entity_filter(extract_query_entities(query).hard_filters)
-
-
-def build_entity_filter(entity_filters: dict[str, str | int | float]) -> str:
-    clauses = []
-    for name, value in entity_filters.items():
-        if isinstance(value, str):
-            clauses.append(f"payload[\"{name}\"] == {quote_expr(value)}")
-        else:
-            clauses.append(f"payload[\"{name}\"] == {value}")
-    return " and ".join(clauses)
-
-
-def build_time_filter(start_ms: int | None, end_ms: int | None) -> str:
-    clauses = []
-    if start_ms is not None:
-        clauses.append(f"timestamp_ms >= {start_ms}")
-    if end_ms is not None:
-        clauses.append(f"timestamp_ms <= {end_ms}")
-    return " and ".join(clauses)
-
-
-def combine_filters(*filters: str) -> str:
-    return " and ".join(filter_expr for filter_expr in filters if filter_expr)
-
-
-STRONG_ENTITY_FILTERS = {"request_id", "block_id", "instance_id", "uuid"}
-
-
-def has_strong_entity_filter(entity_filters: dict[str, Any]) -> bool:
-    return any(key in entity_filters for key in STRONG_ENTITY_FILTERS)
-
-
-def should_apply_template_filter(
-    template_hits: list[TemplateHit],
-    *,
-    min_score: float | None,
-    min_gap: float,
-    has_strong_entity: bool,
-) -> bool:
-    if not template_hits:
-        return False
-    top_score = template_hits[0].score
-    if min_score is not None and top_score < min_score:
-        return False
-    second_score = template_hits[1].score if len(template_hits) > 1 else 0.0
-    return top_score - second_score >= min_gap
-
 
 def encode_query(model: Any, query: str) -> list[float]:
     vector = model.encode(
@@ -233,11 +150,7 @@ def template_hit_to_result(hit: TemplateHit, *, query: str) -> RetrievalResult:
         "payload": {
             "template": hit.template,
             "embed_text": hit.search_text,
-            "signals": hit.signals,
-            "intent": hit.metadata.get("intent"),
             "regex": hit.metadata.get("regex"),
-            "event_type": hit.metadata.get("event_type"),
-            "event_family": hit.metadata.get("event_family"),
             "sample_messages": hit.sample_messages,
             "filter_mode": hit.filter_mode,
         },
@@ -253,6 +166,30 @@ def template_hit_to_result(hit: TemplateHit, *, query: str) -> RetrievalResult:
     return rerank_templates([result], query)[0]
 
 
+def pending_hit_to_result(hit: PendingTemplateHit, *, query: str) -> RetrievalResult:
+    result = RetrievalResult(
+        collection="template",
+        primary_id=hit.candidate_id,
+        score=hit.score,
+        semantic_score=hit.score,
+        entity={
+            "template_id": hit.candidate_id,
+            "candidate_id": hit.candidate_id,
+            "dataset": hit.dataset,
+            "occurrences": hit.occurrences,
+            "payload": {
+                "template": hit.template,
+                "draft_regex": hit.draft_regex,
+                "status": hit.status,
+                "searchable": hit.searchable,
+                "source": "pending",
+            },
+        },
+        source="pending_template_registry",
+    )
+    return rerank_templates([result], query)[0]
+
+
 def template_record_to_result(record: Any) -> RetrievalResult:
     entity = {
         "template_id": record.template_id,
@@ -263,7 +200,6 @@ def template_record_to_result(record: Any) -> RetrievalResult:
         "payload": {
             "template": record.template,
             "embed_text": record.search_text,
-            "signals": record.signals,
             "sample_messages": record.sample_messages,
             **record.metadata,
         },
@@ -278,6 +214,29 @@ def template_record_to_result(record: Any) -> RetrievalResult:
     )
 
 
+def pending_record_to_result(record: PendingTemplateRecord) -> RetrievalResult:
+    return RetrievalResult(
+        collection="template",
+        primary_id=record.candidate_id,
+        score=0.0,
+        semantic_score=0.0,
+        entity={
+            "template_id": record.candidate_id,
+            "candidate_id": record.candidate_id,
+            "dataset": record.dataset,
+            "occurrences": record.occurrences,
+            "payload": {
+                "template": record.template,
+                "draft_regex": record.draft_regex,
+                "status": record.status,
+                "searchable": record.searchable,
+                "source": "pending",
+            },
+        },
+        source="pending_template_lookup",
+    )
+
+
 def row_to_result(collection_name: str, row: dict[str, Any], *, source: str) -> RetrievalResult:
     primary_id = row.get("log_id") or row.get("template_id") or ""
     return RetrievalResult(
@@ -288,218 +247,6 @@ def row_to_result(collection_name: str, row: dict[str, Any], *, source: str) -> 
         entity=row,
         source=source,
     )
-
-
-def occurrence_bonus(template_result: RetrievalResult, query: str) -> float:
-    occurrences = int(template_result.entity.get("occurrences") or 0)
-    if occurrences <= 0:
-        return 0.0
-    scaled = min(math.log1p(occurrences) / 10.0, 0.08)
-    lowered = query.lower()
-    if any(term in lowered for term in ("hiếm", "bất thường", "rare", "anomaly", "outlier")):
-        return -scaled
-    return scaled
-
-
-def rerank_templates(templates: list[RetrievalResult], query: str) -> list[RetrievalResult]:
-    reranked = []
-    for template in templates:
-        bonus = occurrence_bonus(template, query)
-        reranked.append(
-            RetrievalResult(
-                collection=template.collection,
-                primary_id=template.primary_id,
-                score=template.semantic_score + bonus,
-                semantic_score=template.semantic_score,
-                entity=template.entity,
-                source=template.source,
-            )
-        )
-    return sorted(reranked, key=lambda item: item.score, reverse=True)
-
-
-def template_score_map(templates: list[RetrievalResult]) -> dict[str, float]:
-    return {template.primary_id: template.score for template in templates}
-
-
-def rerank_template_child_lines(
-    lines: list[RetrievalResult],
-    templates: list[RetrievalResult],
-    *,
-    line_weight: float = 0.65,
-    template_weight: float = 0.35,
-) -> list[RetrievalResult]:
-    scores = template_score_map(templates)
-    reranked = []
-    for line in lines:
-        template_id = str(line.entity.get("template_id") or "")
-        parent_score = scores.get(template_id, line.semantic_score)
-        final_score = line_weight * line.semantic_score + template_weight * parent_score
-        reranked.append(
-            RetrievalResult(
-                collection=line.collection,
-                primary_id=line.primary_id,
-                score=final_score,
-                semantic_score=line.semantic_score,
-                entity=line.entity,
-                source=line.source,
-            )
-        )
-    return sorted(reranked, key=lambda item: item.score, reverse=True)
-
-
-def merge_results(*groups: list[RetrievalResult], limit: int) -> list[RetrievalResult]:
-    merged: dict[str, RetrievalResult] = {}
-    for group in groups:
-        for item in group:
-            current = merged.get(item.primary_id)
-            if current is None or item.score > current.score:
-                merged[item.primary_id] = item
-    return sorted(merged.values(), key=lambda item: item.score, reverse=True)[:limit]
-
-
-def cap_logs_per_template(
-    lines: list[RetrievalResult],
-    *,
-    logs_per_template: int,
-    limit: int,
-) -> list[RetrievalResult]:
-    if logs_per_template < 1:
-        return lines[:limit]
-    counts: dict[str, int] = {}
-    capped: list[RetrievalResult] = []
-    for line in lines:
-        template_id = str(line.entity.get("template_id") or result_payload_template_id(line) or "")
-        group_key = template_id or line.primary_id
-        current = counts.get(group_key, 0)
-        if current >= logs_per_template:
-            continue
-        counts[group_key] = current + 1
-        capped.append(line)
-        if len(capped) >= limit:
-            break
-    return capped
-
-
-def result_timestamp_ms(result: RetrievalResult) -> int | None:
-    value = result.entity.get("timestamp_ms")
-    if value is None:
-        payload = result.entity.get("payload")
-        if isinstance(payload, dict):
-            value = payload.get("timestamp_ms")
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def normalize_semantic_score(score: float) -> float:
-    if math.isnan(score):
-        return 0.0
-    return max(0.0, min(1.0, score))
-
-
-def template_group_key(line: RetrievalResult) -> str:
-    return str(line.entity.get("template_id") or result_payload_template_id(line) or line.primary_id)
-
-
-def is_temporal_sort(plan: RetrievalPlan) -> bool:
-    return plan.sort is not None and plan.sort.field == "timestamp_ms"
-
-
-def rerank_template_group(
-    lines: list[RetrievalResult],
-    *,
-    plan: RetrievalPlan,
-    config: RetrievalConfig,
-) -> list[RetrievalResult]:
-    if not lines:
-        return []
-
-    if is_temporal_sort(plan):
-        reverse = plan.sort is None or plan.sort.order == "desc"
-        return sorted(
-            lines,
-            key=lambda line: result_timestamp_ms(line) if result_timestamp_ms(line) is not None else -1,
-            reverse=reverse,
-        )
-
-    if not config.enable_recency_rerank or config.recency_weight <= 0:
-        return sorted(lines, key=lambda line: line.score, reverse=True)
-
-    timestamps = [timestamp for line in lines if (timestamp := result_timestamp_ms(line)) is not None]
-    min_timestamp = min(timestamps) if timestamps else None
-    max_timestamp = max(timestamps) if timestamps else None
-    timestamp_span = (
-        max_timestamp - min_timestamp
-        if min_timestamp is not None and max_timestamp is not None
-        else 0
-    )
-
-    weighted: list[RetrievalResult] = []
-    total_weight = config.semantic_weight + config.recency_weight
-    semantic_weight = config.semantic_weight / total_weight if total_weight > 0 else 1.0
-    recency_weight = config.recency_weight / total_weight if total_weight > 0 else 0.0
-    for line in lines:
-        semantic_score = normalize_semantic_score(line.semantic_score)
-        timestamp = result_timestamp_ms(line)
-        recency_score = (
-            (timestamp - min_timestamp) / timestamp_span
-            if timestamp is not None
-            and min_timestamp is not None
-            and timestamp_span > 0
-            else 0.0
-        )
-        final_score = semantic_weight * semantic_score + recency_weight * recency_score
-        weighted.append(
-            RetrievalResult(
-                collection=line.collection,
-                primary_id=line.primary_id,
-                score=final_score,
-                semantic_score=line.semantic_score,
-                entity=line.entity,
-                source=line.source,
-            )
-        )
-    return sorted(
-        weighted,
-        key=lambda line: (
-            line.score,
-            result_timestamp_ms(line) if result_timestamp_ms(line) is not None else -1,
-            line.semantic_score,
-        ),
-        reverse=True,
-    )
-
-
-def rerank_and_cap_lines(
-    lines: list[RetrievalResult],
-    *,
-    plan: RetrievalPlan,
-    config: RetrievalConfig,
-    limit: int,
-) -> list[RetrievalResult]:
-    grouped: dict[str, list[RetrievalResult]] = {}
-    for line in lines:
-        grouped.setdefault(template_group_key(line), []).append(line)
-
-    selected: list[RetrievalResult] = []
-    for group in grouped.values():
-        selected.extend(
-            rerank_template_group(group, plan=plan, config=config)[: config.logs_per_template]
-        )
-
-    if is_temporal_sort(plan):
-        reverse = plan.sort is None or plan.sort.order == "desc"
-        selected.sort(
-            key=lambda line: result_timestamp_ms(line) if result_timestamp_ms(line) is not None else -1,
-            reverse=reverse,
-        )
-    else:
-        selected.sort(key=lambda line: line.score, reverse=True)
-    return selected[:limit]
 
 
 def filter_from_plan(plan: RetrievalPlan, *, include_entities: bool = True) -> str:
@@ -542,18 +289,23 @@ def search_template_candidate_lines(
     query_vector: list[float],
     *,
     base_filter: str,
-    template_ids: list[str],
+    candidates: list[RetrievalResult],
     config: RetrievalConfig,
 ) -> list[RetrievalResult]:
     lines: list[RetrievalResult] = []
-    for template_id in template_ids:
+    for candidate in candidates:
+        candidate_filter = (
+            build_candidate_filter(candidate.primary_id)
+            if candidate.source == "pending_template_registry"
+            else build_template_filter([candidate.primary_id])
+        )
         lines.extend(
             search_vector_lines(
                 client,
                 query_vector,
-                filter_expr=combine_filters(base_filter, build_template_filter([template_id])),
+                filter_expr=combine_filters(base_filter, candidate_filter),
                 top_k=config.candidate_per_template,
-                source="template_filtered",
+                source="candidate_filtered" if candidate.source == "pending_template_registry" else "template_filtered",
                 group_by_field=None,
                 group_size=None,
                 strict_group_size=config.strict_group_size,
@@ -565,73 +317,125 @@ def search_template_candidate_lines(
 def attach_template_candidates(
     plan: RetrievalPlan,
     template_registry: TemplateRegistry | None,
+    pending_template_registry: PendingTemplateRegistry | None,
     query_vector: list[float],
     config: RetrievalConfig,
 ) -> list[RetrievalResult]:
-    if template_registry is None:
+    if template_registry is None and pending_template_registry is None:
         plan.candidate_template_ids = []
         plan.template_candidates = []
         return []
 
-    template_hits = template_registry.search(
-        np.asarray(query_vector, dtype=np.float32),
-        top_k=config.template_k,
-        dataset=plan.dataset,
-        level=plan.level,
-        component=plan.component,
+    template_hits = (
+        template_registry.search(
+            np.asarray(query_vector, dtype=np.float32),
+            top_k=config.template_k,
+            dataset=plan.dataset,
+            level=plan.level,
+            component=plan.component,
+        )
+        if template_registry is not None
+        else []
     )
-    templates = [template_hit_to_result(hit, query=plan.semantic_query) for hit in template_hits]
+    pending_hits = (
+        pending_template_registry.search(
+            plan.semantic_query,
+            top_k=config.template_k,
+            dataset=plan.dataset,
+            min_score=config.min_template_score,
+        )
+        if pending_template_registry is not None
+        else []
+    )
+    templates = sorted(
+        [
+            *(template_hit_to_result(hit, query=plan.semantic_query) for hit in template_hits),
+            *(pending_hit_to_result(hit, query=plan.semantic_query) for hit in pending_hits),
+        ],
+        key=lambda result: result.score,
+        reverse=True,
+    )[: config.template_k]
     plan.template_candidates = [
         {
-            "template_id": hit.template_id,
-            "score": hit.score,
-            "dataset": hit.dataset,
-            "level": hit.level,
-            "component": hit.component,
-            "filter_mode": hit.filter_mode,
+            "template_id": template.primary_id,
+            "score": template.score,
+            "dataset": template.entity.get("dataset"),
+            "level": template.entity.get("level"),
+            "component": template.entity.get("component"),
+            "source": template.source,
+            "status": result_payload_status(template),
         }
-        for hit in template_hits
+        for template in templates
     ]
-    eligible_hits = [
-        hit
-        for hit in template_hits
-        if config.min_template_score is None or hit.score >= config.min_template_score
+    eligible_templates = [
+        template
+        for template in templates
+        if config.min_template_score is None or template.score >= config.min_template_score
     ]
     plan.candidate_template_ids = [
-        hit.template_id
-        for hit in eligible_hits[: min(plan.max_template_ids_for_filter, config.max_template_ids_for_filter)]
+        template.primary_id
+        for template in eligible_templates[: min(plan.max_template_ids_for_filter, config.max_template_ids_for_filter)]
     ]
-    plan.applied_template_filter = should_apply_template_filter(
-        template_hits,
+    plan.applied_template_filter = should_apply_result_template_filter(
+        templates,
         min_score=config.min_template_score,
         min_gap=config.min_template_score_gap,
-        has_strong_entity=has_strong_entity_filter(plan.entity_filters),
     )
     return templates
+
+
+def result_payload_status(result: RetrievalResult) -> str | None:
+    payload = result.entity.get("payload")
+    if isinstance(payload, dict):
+        value = payload.get("status")
+        return str(value) if value else None
+    return None
+
+
+def should_apply_result_template_filter(
+    templates: list[RetrievalResult],
+    *,
+    min_score: float | None,
+    min_gap: float,
+) -> bool:
+    if not templates:
+        return False
+    top_score = templates[0].score
+    if min_score is not None and top_score < min_score:
+        return False
+    second_score = templates[1].score if len(templates) > 1 else 0.0
+    return top_score - second_score >= min_gap
 
 
 def enrich_templates_from_lines(
     lines: list[RetrievalResult],
     template_registry: TemplateRegistry | None,
+    pending_template_registry: PendingTemplateRegistry | None,
     existing: list[RetrievalResult],
 ) -> list[RetrievalResult]:
     by_id = {template.primary_id: template for template in existing}
-    if template_registry is None:
-        return list(by_id.values())
     template_ids = []
+    candidate_ids = []
     for line in lines:
         template_id = str(line.entity.get("template_id") or result_payload_template_id(line) or "")
-        if template_id and template_id not in by_id and template_id not in template_ids:
+        candidate_id = str(result_payload_candidate_id(line) or "")
+        if candidate_id and candidate_id not in by_id and candidate_id not in candidate_ids:
+            candidate_ids.append(candidate_id)
+        elif template_id and template_id not in by_id and template_id not in template_ids:
             template_ids.append(template_id)
-    for record in template_registry.get_many(template_ids):
-        by_id[record.template_id] = template_record_to_result(record)
+    if template_registry is not None:
+        for record in template_registry.get_many(template_ids):
+            by_id[record.template_id] = template_record_to_result(record)
+    if pending_template_registry is not None:
+        for record in pending_template_registry.get_many(candidate_ids):
+            by_id[record.candidate_id] = pending_record_to_result(record)
     return list(by_id.values())
 
 
-def result_payload_template_id(result: RetrievalResult) -> str | None:
+def result_payload_candidate_id(result: RetrievalResult) -> str | None:
     payload = result.entity.get("payload")
     if isinstance(payload, dict):
-        value = payload.get("template_id")
+        value = payload.get("candidate_id")
         return str(value) if value else None
     return None
 
@@ -644,6 +448,7 @@ def execute_plan(
     template_k: int = 8,
     config: RetrievalConfig | None = None,
     template_registry: TemplateRegistry | None = None,
+    pending_template_registry: PendingTemplateRegistry | None = None,
 ) -> RetrievalResponse:
     retrieval_config = config or RetrievalConfig(template_k=template_k)
     final_limit = min(plan.top_k, retrieval_config.final_top_k)
@@ -661,7 +466,7 @@ def execute_plan(
             row_to_result(LOG_LINE_COLLECTION, row, source="temporal")
             for row in rows[:final_limit]
         ]
-        templates = enrich_templates_from_lines(lines, template_registry, [])
+        templates = enrich_templates_from_lines(lines, template_registry, pending_template_registry, [])
         return RetrievalResponse("filtered_temporal", filter_expr, lines, templates)
 
     if model is None:
@@ -669,13 +474,24 @@ def execute_plan(
 
     query_vector = encode_query(model, plan.semantic_query)
     base_filter = filter_from_plan(plan)
-    templates = attach_template_candidates(plan, template_registry, query_vector, retrieval_config)
-
-    template_filter = (
-        build_template_filter(plan.candidate_template_ids)
-        if plan.applied_template_filter and plan.candidate_template_ids
-        else ""
+    pending_template_registry = pending_template_registry.reload_if_changed() if pending_template_registry else None
+    templates = attach_template_candidates(
+        plan,
+        template_registry,
+        pending_template_registry,
+        query_vector,
+        retrieval_config,
     )
+
+    selected_template_candidates: list[RetrievalResult] = []
+    if plan.applied_template_filter and plan.candidate_template_ids:
+        candidate_template_ids = set(plan.candidate_template_ids)
+        selected_template_candidates = [
+            template
+            for template in templates
+            if template.primary_id in candidate_template_ids
+        ]
+    template_filter = build_candidate_filters(selected_template_candidates)
     filter_expr = combine_filters(base_filter, template_filter)
     search_k = max(final_limit, plan.vector_search_k or retrieval_config.vector_search_k)
     candidate_group_size = max(retrieval_config.candidate_per_template, retrieval_config.logs_per_template)
@@ -689,7 +505,7 @@ def execute_plan(
             client,
             query_vector,
             base_filter=base_filter,
-            template_ids=plan.candidate_template_ids,
+            candidates=selected_template_candidates,
             config=retrieval_config,
         )
     else:
@@ -732,5 +548,5 @@ def execute_plan(
     else:
         plan.fallback_used = False
 
-    templates = enrich_templates_from_lines(lines, template_registry, templates)
+    templates = enrich_templates_from_lines(lines, template_registry, pending_template_registry, templates)
     return RetrievalResponse("filtered_vector", filter_expr, lines, templates)

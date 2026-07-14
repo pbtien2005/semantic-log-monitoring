@@ -6,6 +6,6 @@ generation CLI and validation tooling share the same deterministic seed data.
 
 from __future__ import annotations
 
-from scripts.benchmark.generate_queries import QUERY_BANK, QuerySpec
+from infra.scripts.benchmark.generate_queries import QUERY_BANK, QuerySpec
 
 __all__ = ["QUERY_BANK", "QuerySpec"]

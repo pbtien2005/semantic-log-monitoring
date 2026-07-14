@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
 
 DEFAULT_URI = os.getenv("MILVUS_URI", "http://localhost:19530")

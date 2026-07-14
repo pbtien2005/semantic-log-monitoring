@@ -9,9 +9,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
-from src.benchmark.query_bank import QUERY_BANK
 from src.core.io_utils import benchmark_dir, ensure_dir
 from src.core.schema import DATASETS, validate_dataset
 from src.rules.category_rules import extract_took_seconds, score_log, scoring_profile
@@ -119,7 +118,7 @@ def audit_dataset(dataset: str, root: Path) -> str:
                 row["category"],
                 escape_cell(reason),
                 escape_cell((row.get("message") or row.get("raw_log") or "")[:220]),
-                suggestion_for(row["category"], reason),
+                suggestion_for(row["category"]),
             ]
         )
 
@@ -141,7 +140,7 @@ def audit_dataset(dataset: str, root: Path) -> str:
     )
 
 
-def suggestion_for(category: str, reason: str) -> str:
+def suggestion_for(category: str) -> str:
     if category == "latency":
         return "Use duration thresholds: <5s hard_negative/ignore, 5-10s uncertain, >=10s positive."
     if category == "storage":

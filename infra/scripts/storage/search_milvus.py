@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
 from src.core.schema import DATASETS
 
@@ -57,7 +57,7 @@ def encode_query(model: Any, query: str) -> list[float]:
     return vector.tolist()
 
 
-def summarize_payload(collection_name: str, payload: dict[str, Any]) -> str:
+def summarize_payload(payload: dict[str, Any]) -> str:
     raw_log = payload.get("raw_log")
     message = payload.get("message")
     template = payload.get("template")
@@ -77,7 +77,7 @@ def print_hits(collection_name: str, hits: list[dict[str, Any]]) -> None:
         score = hit.get("distance")
         print(f"{index}. score={score:.4f} id={primary_id}")
         print(f"   dataset={entity.get('dataset')} level={entity.get('level')} component={entity.get('component')}")
-        print(f"   text={summarize_payload(collection_name, payload)}")
+        print(f"   text={summarize_payload(payload)}")
 
 
 def parse_args() -> argparse.Namespace:

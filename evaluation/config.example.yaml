@@ -1,0 +1,21 @@
+dataset:
+  version: groundtruth-v1.0
+  seed: 20260714
+  log_count: 2000
+  query_count: 50
+  incident_count: 15
+  anomaly_count: 18
+
+retrieval:
+  top_k: 24
+  experiments:
+    - baseline_log_only_v1
+    - template_first_recency_v1
+
+quality_gates:
+  hit_at_10: 0.85
+  recall_at_24: 0.80
+  required_evidence_recall_at_24: 0.90
+  root_cause_hit_at_10: 0.75
+  root_cause_hit_at_24: 0.90
+  root_cause_mrr: 0.50

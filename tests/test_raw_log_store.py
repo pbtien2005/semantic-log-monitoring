@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import unittest
+from io import BytesIO
 from typing import Any
+from urllib.error import HTTPError
 
-from src.ingestion.raw_log_store import OpenSearchRawLogStore, RawLogStoreSettings
+from src.ingestion.raw_log_store import OpenSearchRawLogStore, RawLogStoreError, RawLogStoreSettings
 
 
 class FakeHttpResponse:
@@ -20,6 +22,11 @@ class FakeHttpResponse:
 
     def read(self) -> bytes:
         return json.dumps(self.payload).encode("utf-8")
+
+
+class InvalidJsonResponse(FakeHttpResponse):
+    def read(self) -> bytes:
+        return b"not-json"
 
 
 class RawLogStoreTest(unittest.TestCase):
@@ -94,6 +101,34 @@ class RawLogStoreTest(unittest.TestCase):
         self.assertEqual(calls[-1]["url"], "http://opensearch:9200/semantic-raw-logs/_search")
         self.assertEqual(calls[-1]["body"]["size"], 2)
         self.assertEqual(calls[-1]["body"]["sort"][0]["timestamp_ms"]["order"], "desc")
+
+    def test_get_log_uses_http_status_for_not_found(self) -> None:
+        def opener(request: Any, timeout: float = 10) -> FakeHttpResponse:
+            if request.get_method() == "GET":
+                raise HTTPError(
+                    request.full_url,
+                    404,
+                    "Not Found",
+                    hdrs=None,
+                    fp=BytesIO(b'{"error":"missing document"}'),
+                )
+            return FakeHttpResponse()
+
+        store = OpenSearchRawLogStore(
+            RawLogStoreSettings(base_url="http://opensearch:9200", index_name="semantic-raw-logs"),
+            opener=opener,
+        )
+
+        self.assertIsNone(store.get_log("missing"))
+
+    def test_invalid_json_response_is_wrapped_as_store_error(self) -> None:
+        store = OpenSearchRawLogStore(
+            RawLogStoreSettings(base_url="http://opensearch:9200", index_name="semantic-raw-logs"),
+            opener=lambda request, timeout=10: InvalidJsonResponse(),
+        )
+
+        with self.assertRaisesRegex(RawLogStoreError, "invalid JSON"):
+            store.recent_logs()
 
 
 if __name__ == "__main__":

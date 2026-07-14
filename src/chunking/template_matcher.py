@@ -21,15 +21,10 @@ class TemplateRule:
     dataset: str
     template: str
     regex: re.Pattern[str]
-    intent: tuple[str, ...]
     priority: int = 0
     active: bool = True
     component: str | None = None
     level: str | None = None
-    event_type: str | None = None
-    event_family: str | None = None
-    signals: tuple[str, ...] = ()
-    weak_signals: tuple[str, ...] = ()
     raw_regex: str = ""
 
 
@@ -38,16 +33,11 @@ class TemplateMatch:
     matched: bool
     template_id: str | None
     template: str
-    intent: list[str]
     match_method: str
     confidence: float
     slots: dict[str, str]
     component: str | None = None
     level: str | None = None
-    event_type: str | None = None
-    event_family: str | None = None
-    signals: list[str] | None = None
-    weak_signals: list[str] | None = None
     candidate_count: int = 0
 
 
@@ -56,14 +46,6 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
-
-def _string_list(value: Any) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        return (value,)
-    return tuple(str(item) for item in value)
 
 
 def rule_from_record(record: dict[str, Any]) -> TemplateRule:
@@ -83,15 +65,10 @@ def rule_from_record(record: dict[str, Any]) -> TemplateRule:
         template=str(template),
         regex=re.compile(str(regex), re.IGNORECASE),
         raw_regex=str(regex),
-        intent=_string_list(record.get("intent")),
         priority=int(record.get("priority") or 0),
         active=bool(record.get("active", True)),
         component=_optional_str(record.get("component")),
         level=_optional_str(record.get("level")),
-        event_type=_optional_str(record.get("event_type")),
-        event_family=_optional_str(record.get("event_family")),
-        signals=_string_list(record.get("signals")),
-        weak_signals=_string_list(record.get("weak_signals")),
     )
 
 
@@ -152,16 +129,11 @@ class TemplateMatcher:
                 matched=True,
                 template_id=rule.template_id,
                 template=rule.template,
-                intent=list(rule.intent),
                 match_method=match_method,
                 confidence=confidence,
                 slots=slots,
                 component=rule.component,
                 level=rule.level,
-                event_type=rule.event_type,
-                event_family=rule.event_family,
-                signals=list(rule.signals),
-                weak_signals=list(rule.weak_signals),
                 candidate_count=len(candidates),
             )
 
@@ -179,16 +151,11 @@ class TemplateMatcher:
                 matched=True,
                 template_id=rule.template_id,
                 template=rule.template,
-                intent=list(rule.intent),
                 match_method="normalized_template",
                 confidence=0.9,
                 slots={},
                 component=rule.component,
                 level=rule.level,
-                event_type=rule.event_type,
-                event_family=rule.event_family,
-                signals=list(rule.signals),
-                weak_signals=list(rule.weak_signals),
                 candidate_count=len(normalized_candidates),
             )
 
@@ -196,7 +163,6 @@ class TemplateMatcher:
             matched=False,
             template_id=None,
             template=normalized_message,
-            intent=[],
             match_method="fallback_normalize",
             confidence=0.0,
             slots={},

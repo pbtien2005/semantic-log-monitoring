@@ -40,13 +40,14 @@ Apache / OpenStack / HDFS
       -> parse
       -> chunk/template/entity
       -> embedding
-      -> Milvus + OpenSearch/dashboard data
+      -> Milvus + dashboard data
 
 Streaming data:
 POST /api/ingest/logs
+      -> API kiểm tra raw log
       -> Kafka logs.raw
-      -> semantic-worker
-      -> chunking + embedding + anomaly enrichment
+      -> semantic-worker xử lý theo batch
+      -> parse/template/entity + batch embedding
       -> Milvus + OpenSearch
 ```
 
@@ -75,8 +76,10 @@ src/rag/                  # Sinh câu trả lời RAG
 src/anomaly/              # Baseline, scoring, online state, enrichment
 src/rca/                  # RCA evidence ranking
 infra/scripts/            # CLI xử lý ingestion, chunking, storage, anomaly, benchmark
+infra/scripts/demo/       # Kịch bản và công cụ gửi log demo RCA
 frontend/                 # React dashboard
 data/                     # Raw logs, benchmark data, chunks, templates, retrieval artifacts
+evaluation/               # Dataset, runner và metrics đánh giá retrieval/anomaly/RCA
 tests/                    # Unit/integration tests
 docker-compose.yml        # Compose stack cho app, API, Kafka, OpenSearch, Milvus, CLIProxyAPI
 ```
@@ -135,6 +138,8 @@ Kiểm tra health:
 GET /healthz
 ```
 
+Endpoint này thuộc service `api`. Khi chạy backend local trên port mặc định, URL đầy đủ là `http://localhost:8000/healthz`; nginx của dashboard chỉ proxy các endpoint `/api/*`.
+
 Hỏi đáp log:
 
 ```text
@@ -146,6 +151,18 @@ Tiếp nhận log mới:
 ```text
 POST /api/ingest/logs
 ```
+
+Payload tối thiểu:
+
+```json
+{
+  "dataset": "apache",
+  "source_id": "demo-stream",
+  "raw_log": "[Sun Dec 04 04:47:44 2005] [notice] workerEnv.init() ok"
+}
+```
+
+API chỉ nhận log thô và metadata tối thiểu. Các bước xử lý sâu như template, entity, anomaly và embedding được thực hiện ở `semantic-worker`.
 
 Lấy danh sách log gần đây:
 
@@ -200,7 +217,29 @@ Hệ thống hỗ trợ tiếp nhận log mới qua API:
 POST /api/ingest/logs
 ```
 
-API sẽ chuẩn hóa payload, lưu trạng thái ban đầu vào OpenSearch và publish message vào Kafka topic `logs.raw`. `semantic-worker` đọc dữ liệu từ Kafka, build chunk, tạo embedding, gắn thông tin anomaly nếu được bật, sau đó ghi dữ liệu vào Milvus và cập nhật trạng thái trong OpenSearch.
+API ingest chỉ nhận log thô và một số metadata tối thiểu, ví dụ `dataset`, `source_id` và `raw_log`. API không thực hiện template extraction, entity extraction hay embedding.
+
+Luồng xử lý chính:
+
+```text
+Raw log payload
+      -> Ingest API
+      -> validate + normalize basic fields
+      -> OpenSearch pending status
+      -> Kafka topic logs.raw
+      -> semantic-worker đọc theo batch
+      -> parse + normalize log record
+      -> template + entity extraction
+      -> optional anomaly enrichment
+      -> tạo Milvus rows
+      -> batch embedding
+      -> upsert theo batch vào Milvus
+      -> update OpenSearch index status
+```
+
+Trong luồng này, `semantic-worker` là nơi xử lý semantic chính. Worker đọc log từ Kafka theo batch, tạo chunk bằng `build_line_chunk`, trích xuất template/entity, gắn anomaly payload nếu được bật, sau đó gom các log thành batch để tạo embedding và upsert vào collection `log_line` trong Milvus.
+
+Các template mới chưa có trong catalog được worker ghi vào `data/templates/pending_templates.jsonl`. Docker Compose dùng volume `template-data` chung để API có thể đọc các candidate này trong quá trình retrieval.
 
 Các biến môi trường liên quan:
 
@@ -209,11 +248,48 @@ KAFKA_BOOTSTRAP_SERVERS
 KAFKA_LOGS_RAW_TOPIC
 KAFKA_LOGS_FAILED_TOPIC
 KAFKA_CONSUMER_GROUP
+INGESTION_BATCH_SIZE
+INGESTION_FLUSH_INTERVAL_SECONDS
 MILVUS_URI
 EMBEDDING_MODEL
+EMBEDDING_BATCH_SIZE
 ANOMALY_ENABLED
 ANOMALY_BASELINE_PATH
 ```
+
+## Chạy Kịch Bản Demo RCA
+
+Sau khi Docker Compose đã healthy, gửi bộ log demo qua nginx của dashboard:
+
+```powershell
+python infra/scripts/demo/send_rca_logs.py --base-url http://localhost:8501 --scenario basic
+```
+
+Kịch bản có nhiều evidence hơn:
+
+```powershell
+python infra/scripts/demo/send_rca_logs.py --base-url http://localhost:8501 --scenario high
+```
+
+Chi tiết log, anomaly ground truth, RCA ground truth và câu hỏi kiểm thử nằm trong `docs/semantic_log_monitoring_demo_scenario.md`. Các scenario dùng `log_id` cố định; chạy lại sẽ cập nhật/upsert cùng bản ghi, không tạo một phiên demo độc lập với ID mới.
+
+## Evaluation
+
+Sinh lại bộ dữ liệu đánh giá có ground truth theo seed cố định:
+
+```powershell
+python -m evaluation.scripts.generate_dataset --config evaluation/config.example.yaml
+python -m evaluation.scripts.validate_groundtruth --dataset-dir evaluation/datasets
+```
+
+Chạy retrieval evaluation cục bộ và tính metrics:
+
+```powershell
+python -m evaluation.scripts.run_retrieval_evaluation --experiment baseline_log_only_v1 --top-k 24
+python -m evaluation.scripts.calculate_retrieval_metrics --results evaluation/results/retrieval_baseline_log_only_v1.jsonl
+```
+
+Quy trình đầy đủ, bao gồm loader và live retrieval runner, được mô tả trong `evaluation/README.md`.
 
 ## RAG Và Chat
 

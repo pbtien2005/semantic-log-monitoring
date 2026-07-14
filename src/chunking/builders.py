@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-from collections import Counter, defaultdict
-from dataclasses import dataclass
+from collections import defaultdict
 from typing import Any
 
 from src.core.schema import validate_log_dataset
-from src.rules.category_rules import CATEGORIES, score_log, scoring_profile
 from src.chunking.parsing import (
     HTTP_STATUS_RE,
     RESPONSE_LEN_RE,
@@ -26,23 +24,11 @@ from src.chunking.parsing import (
     unique,
 )
 from src.chunking.template_matcher import TemplateMatcher
+from src.chunking.template_discovery import candidate_id_for_template
 
 
 MAX_TEMPLATE_SAMPLES = 5
 UNKNOWN_VALUES = {"", "none", "unknown", "null"}
-
-
-@dataclass(frozen=True, slots=True)
-class EventClassification:
-    event_type: str | None = None
-    event_family: str | None = None
-    signals: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class SignalBundle:
-    signals: list[str]
-    weak_signals: list[str]
 
 
 def meaningful_value(value: Any) -> str | None:
@@ -54,160 +40,27 @@ def meaningful_value(value: Any) -> str | None:
     return text
 
 
-def embeddable_signals(signals: list[str]) -> list[str]:
-    return [signal for signal in signals if meaningful_value(signal)]
-
-
-def classify_event(dataset: str, template: str, message: str, component: str | None) -> EventClassification:
-    text = f"{component or ''} {template} {message}".lower()
-
-    if dataset == "apache":
-        if "directory index forbidden" in text:
-            return EventClassification(
-                "directory_index_forbidden",
-                "apache_access",
-                ("directory_forbidden", "permission_denied"),
-            )
-        if "workerenv.init() ok" in text:
-            return EventClassification(
-                "worker_env_initialized",
-                "apache_backend",
-                ("worker_environment", "initialization_success", "config_loaded"),
-            )
-        if "workerenv in error state" in text:
-            return EventClassification(
-                "backend_worker_error",
-                "apache_backend",
-                ("worker_environment", "backend_worker_error", "backend_down", "worker_error"),
-            )
-
-    if dataset == "openstack":
-        if "no valid host" in text:
-            return EventClassification(
-                "scheduler_failure",
-                "compute_lifecycle",
-                ("scheduler_failure", "no_valid_host", "compute_lifecycle"),
-            )
-        if "took <duration_" in text and "build instance" in text:
-            return EventClassification(
-                "instance_build_completed",
-                "compute_lifecycle",
-                ("instance_build", "instance_build_completed", "compute_lifecycle"),
-            )
-        if "sync_power_state" in text:
-            return EventClassification(
-                "sync_power_state",
-                "compute_lifecycle",
-                ("sync_power_state", "compute_lifecycle"),
-            )
-        if "libvirt" in text and ("error" in text or "exception" in text):
-            return EventClassification(
-                "libvirt_error",
-                "compute_lifecycle",
-                ("libvirt_error", "compute_lifecycle"),
-            )
-
-    if dataset == "hdfs":
-        if "packetresponder" in text:
-            return EventClassification(
-                "packet_responder_block_lifecycle",
-                "hdfs_block_lifecycle",
-                ("hdfs_block_lifecycle", "datanode_storage"),
-            )
-        if "block" in text or "blk_" in text:
-            return EventClassification(
-                None,
-                "hdfs_block_lifecycle",
-                ("hdfs_block_lifecycle",),
-            )
-
-    return EventClassification()
-
-
-def build_signal_bundle(
-    dataset: str,
-    log: dict[str, Any],
-    template: str,
-    entities: dict[str, list[str]],
-    event: EventClassification,
-) -> SignalBundle:
-    signal_set: set[str] = set()
-    weak_signal_set: set[str] = set()
-    component = str(log.get("component") or "").lower()
-    level = str(log.get("level") or "").lower()
-    text = f"{component} {level} {template}".lower()
-
-    if component:
-        signal_set.update(part for part in component.split(".") if part and part != "nova")
-    if level in {"warn", "warning", "error", "notice"}:
-        signal_set.add(f"level_{level}")
-    if entities["request_id"]:
-        signal_set.add("has_request_id")
-    if entities["instance_id"]:
-        signal_set.add("has_instance_id")
-    if entities["block_id"]:
-        signal_set.add("has_block_id")
-    if entities["ip"]:
-        signal_set.add("has_ip")
-    if "instance" in text or "vm " in text:
-        signal_set.add("instance_state")
-    if "sync_power_state" in text:
-        signal_set.add("sync_power_state")
-    if "imagecache" in text or "image cache" in text or "base file" in text:
-        signal_set.add("image_cache")
-    if "packetresponder" in text or "blockmap" in text or "fsdataset" in text:
-        signal_set.add("hdfs_storage")
-    if "status:" in text or "http/" in text:
-        signal_set.add("http_request")
-    signal_set.update(event.signals)
-
-    for category in CATEGORIES:
-        scored = score_log(dataset, category, log)
-        label = scored.label(scoring_profile(category))
-        if category == "unknown" and label in {"positive", "uncertain"}:
-            weak_signal_set.add(category)
-        elif label == "positive":
-            signal_set.add(category)
-        elif label == "uncertain":
-            weak_signal_set.add(category)
-
-    return SignalBundle(sorted(signal_set), sorted(weak_signal_set - signal_set))
-
-
-def build_signals(dataset: str, log: dict[str, Any], template: str, entities: dict[str, list[str]]) -> list[str]:
-    event = classify_event(dataset, template, str(log.get("message") or ""), log.get("component"))
-    return build_signal_bundle(dataset, log, template, entities, event).signals
-
-
 def build_embed_text(
     *,
     dataset: str,
     component: str | None,
     level: str | None,
     template: str,
-    signals: list[str],
-    intent: list[str] | None = None,
-    event_type: str | None = None,
-    event_family: str | None = None,
     message: str | None = None,
+    candidate_id: str | None = None,
     occurrences: int | None = None,
 ) -> str:
     fields = (
         ("dataset", dataset),
         ("component", component),
         ("level", level),
-        ("event_type", event_type),
-        ("event_family", event_family),
         ("template", template),
     )
     lines = [f"{name}: {text}" for name, value in fields if (text := meaningful_value(value))]
-    filtered_signals = embeddable_signals(signals)
-    if intent:
-        lines.append("intent: " + " ".join(embeddable_signals(intent)))
-    if filtered_signals:
-        lines.append("signals: " + " ".join(filtered_signals))
     if message_text := meaningful_value(message):
         lines.append(f"message: {message_text}")
+    if candidate_text := meaningful_value(candidate_id):
+        lines.append(f"candidate_id: {candidate_text}")
     if occurrences is not None:
         lines.append(f"occurrences: {occurrences}")
     return "\n".join(lines)
@@ -250,30 +103,18 @@ def build_line_chunk(log: dict[str, Any], *, template_matcher: TemplateMatcher |
     duration_ms = parse_duration_ms(message)
     task_state = infer_task_state(message)
     module = infer_apache_module(message) if dataset == "apache" else None
-    event = classify_event(dataset, template, message, log.get("component"))
-    signal_bundle = build_signal_bundle(dataset, log, template, entities, event)
-    signals = signal_bundle.signals
-    weak_signals = signal_bundle.weak_signals
     message_for_embedding = sanitize_message_for_embedding(message)
-    template_id = (
-        match.template_id
-        if match and match.template_id
-        else template_chunk_id(dataset, component, level, template)
-    )
-    intent = match.intent if match else []
+    candidate_id = None
+    if match and match.template_id:
+        template_id = match.template_id
+    else:
+        candidate_id = candidate_id_for_template(dataset, template)
+        template_id = candidate_id
     template_match_status = "matched" if match and match.matched else ("miss" if match else "dynamic")
     template_match_method = match.match_method if match else "dynamic_normalize"
     template_match_confidence = match.confidence if match else 1.0
     template_slots = match.slots if match else {}
     ambiguous_match_count = match.candidate_count if match and match.candidate_count > 1 else 0
-    if match and match.matched:
-        event = EventClassification(
-            event_type=match.event_type or event.event_type,
-            event_family=match.event_family or event.event_family,
-            signals=tuple(match.signals or ()),
-        )
-        signals = sorted(set(signals).union(match.signals or ()))
-        weak_signals = sorted(set(weak_signals).union(match.weak_signals or ()) - set(signals))
 
     metadata = {
         "timestamp": timestamp,
@@ -286,17 +127,13 @@ def build_line_chunk(log: dict[str, Any], *, template_matcher: TemplateMatcher |
         "raw_log": raw_log,
         "message": message,
         "template": template,
-        "signals": signals,
-        "weak_signals": weak_signals,
-        "event_type": event.event_type,
-        "event_family": event.event_family,
         "template_id": template_id,
+        "candidate_id": candidate_id,
         "template_match_status": template_match_status,
         "template_match_method": template_match_method,
         "template_match_confidence": template_match_confidence,
         "template_slots": template_slots,
         "ambiguous_match_count": ambiguous_match_count,
-        "intent": intent,
         "message_for_embedding": message_for_embedding,
         "entities": entities,
         "request_id": first(entities["request_id"]),
@@ -341,19 +178,14 @@ def build_line_chunk(log: dict[str, Any], *, template_matcher: TemplateMatcher |
         "ip": metadata["ip"],
         "http_status": http_status,
         "duration_ms": duration_ms,
-        "event_type": event.event_type,
-        "event_family": event.event_family,
         "template_id": template_id,
         "embed_text": build_embed_text(
             dataset=dataset,
             component=component,
             level=level,
-            event_type=event.event_type,
-            event_family=event.event_family,
             template=template,
-            signals=signals,
-            intent=intent,
             message=message_for_embedding,
+            candidate_id=candidate_id,
         ),
         "metadata": metadata,
     }
@@ -388,23 +220,6 @@ def build_template_chunks(line_chunks: list[dict[str, Any]]) -> list[dict[str, A
 
     template_chunks: list[dict[str, Any]] = []
     for (dataset, component, level, template), chunks in sorted(groups.items()):
-        signals = sorted({signal for chunk in chunks for signal in chunk["metadata"].get("signals", [])})
-        weak_signals = sorted(
-            {signal for chunk in chunks for signal in chunk["metadata"].get("weak_signals", [])}
-            - set(signals)
-        )
-        event_type_counts = Counter(
-            event_type
-            for chunk in chunks
-            if (event_type := chunk["metadata"].get("event_type"))
-        )
-        event_family_counts = Counter(
-            event_family
-            for chunk in chunks
-            if (event_family := chunk["metadata"].get("event_family"))
-        )
-        event_type = event_type_counts.most_common(1)[0][0] if event_type_counts else None
-        event_family = event_family_counts.most_common(1)[0][0] if event_family_counts else None
         sample_chunks = chunks[:MAX_TEMPLATE_SAMPLES]
         line_numbers = [chunk["metadata"]["line_number"] for chunk in chunks]
         entities = merge_entities(chunks)
@@ -413,10 +228,6 @@ def build_template_chunks(line_chunks: list[dict[str, Any]]) -> list[dict[str, A
             "component": component,
             "level": level,
             "template": template,
-            "signals": signals,
-            "weak_signals": weak_signals,
-            "event_type": event_type,
-            "event_family": event_family,
             "occurrence_count": occurrence_count,
             "log_ids": [chunk["log_id"] for chunk in chunks],
             "sample_log_ids": [chunk["log_id"] for chunk in sample_chunks],
@@ -448,16 +259,11 @@ def build_template_chunks(line_chunks: list[dict[str, Any]]) -> list[dict[str, A
                 "ip": first(entities.get("ip", [])),
                 "http_status": None,
                 "duration_ms": None,
-                "event_type": event_type,
-                "event_family": event_family,
                 "embed_text": build_embed_text(
                     dataset=dataset,
                     component=component,
                     level=level,
-                    event_type=event_type,
-                    event_family=event_family,
                     template=template,
-                    signals=signals,
                     occurrences=occurrence_count,
                 ),
                 "metadata": metadata,

@@ -2,6 +2,7 @@ export type LogLevel = "ERROR" | "WARN" | "NOTICE" | "INFO" | "DEBUG" | "UNKNOWN
 export type AnomalyLevel = "normal" | "low" | "medium" | "high" | "unknown";
 export type AnomalyDecision = "normal" | "watch" | "anomalous" | "warming_up" | "not_scored";
 export type BaselineStatus = "ready" | "insufficient_history" | "missing_baseline" | "disabled" | "error";
+export type IndexStatus = "pending" | "indexed" | "failed" | "unknown";
 
 export type AnomalyPayload = {
   score?: number | null;
@@ -34,6 +35,9 @@ export type LogRecord = {
   anomaly_baseline_status?: string | null;
   anomaly_reasons?: readonly string[] | null;
   anomaly_components?: Record<string, number | null> | null;
+  index_status?: string | null;
+  indexed_at?: string | null;
+  index_error?: string | null;
 };
 
 export type DashboardLog = {
@@ -53,6 +57,9 @@ export type DashboardLog = {
   anomalyBaselineStatus: BaselineStatus;
   anomalyReasons: string[];
   anomalyComponents: Record<string, number | null>;
+  indexStatus: IndexStatus;
+  indexedAt: string | null;
+  indexError: string | null;
 };
 
 export type LogFilters = {
@@ -92,6 +99,7 @@ const LEVELS = new Set(["ERROR", "WARN", "NOTICE", "INFO", "DEBUG"]);
 const ANOMALY_LEVELS = new Set(["normal", "low", "medium", "high", "unknown"]);
 const ANOMALY_DECISIONS = new Set(["normal", "watch", "anomalous", "warming_up", "not_scored"]);
 const BASELINE_STATUSES = new Set(["ready", "insufficient_history", "missing_baseline", "disabled", "error"]);
+const INDEX_STATUSES = new Set(["pending", "indexed", "failed", "unknown"]);
 const RECENT_TERMS = ["moi nhat", "gan day", "vua xay ra", "latest", "recent", "newest", "last logs"];
 
 export const levelColors: Record<LogLevel, string> = {
@@ -158,6 +166,7 @@ export function normalizeLog(record: LogRecord): DashboardLog {
   const anomalyLevel = normalizeText(record.anomaly_level ?? anomaly.level, "unknown");
   const anomalyDecision = normalizeText(record.anomaly_decision ?? anomaly.decision, "not_scored");
   const anomalyBaselineStatus = normalizeText(record.anomaly_baseline_status ?? anomaly.baseline_status, "disabled");
+  const indexStatus = normalizeText(record.index_status, "unknown").toLowerCase();
   const anomalyScore =
     typeof record.anomaly_score === "number"
       ? record.anomaly_score
@@ -191,7 +200,10 @@ export function normalizeLog(record: LogRecord): DashboardLog {
       ? (anomalyBaselineStatus as BaselineStatus)
       : "disabled",
     anomalyReasons: Array.isArray(anomalyReasons) ? [...anomalyReasons] : [],
-    anomalyComponents: anomalyComponents && typeof anomalyComponents === "object" ? anomalyComponents : {}
+    anomalyComponents: anomalyComponents && typeof anomalyComponents === "object" ? anomalyComponents : {},
+    indexStatus: INDEX_STATUSES.has(indexStatus) ? (indexStatus as IndexStatus) : "unknown",
+    indexedAt: normalizeText(record.indexed_at) || null,
+    indexError: normalizeText(record.index_error) || null
   };
 }
 

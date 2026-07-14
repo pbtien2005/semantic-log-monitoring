@@ -13,13 +13,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
-from scripts.benchmark.validate_query_bank import apply_filters, validate_dataset_queries
+from infra.scripts.benchmark.validate_query_bank import apply_filters, validate_dataset_queries
 from src.benchmark.query_bank import QUERY_BANK
 from src.core.io_utils import ensure_dir, read_jsonl
 from src.core.schema import DATASETS, validate_dataset
-from src.rules.category_rules import log_text, rule_matches, rules_for
+from src.rules.category_rules import log_text, rules_for
 
 
 DISCOVERY_PATTERNS: dict[str, dict[str, tuple[str, ...]]] = {

@@ -57,6 +57,16 @@ class ChatApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_chat_endpoint_rejects_non_object_json(self) -> None:
+        response = TestClient(create_app(), raise_server_exceptions=False).post(
+            "/api/chat",
+            content=json.dumps([]),
+            headers={"content-type": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"error": "json payload must be an object"})
+
 
 if __name__ == "__main__":
     unittest.main()

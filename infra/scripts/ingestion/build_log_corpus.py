@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
 from src.core.io_utils import benchmark_dir, raw_dir, write_jsonl
 from src.core.schema import DATASETS, LogRecord, validate_dataset, validate_log_record

@@ -11,7 +11,15 @@ from src.core.schema import DATASETS
 
 SortField = Literal["timestamp_ms", "occurrences"]
 SortOrder = Literal["asc", "desc"]
-AnswerMode = Literal["root_cause", "search_log", "anomaly", "stats", "timeline", "general"]
+AnswerMode = Literal[
+    "root_cause",
+    "search_log",
+    "anomaly",
+    "stats",
+    "timeline",
+    "summary",
+    "general",
+]
 FilterValue = str | int | float | bool | list[str] | list[int] | list[float]
 
 

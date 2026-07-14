@@ -16,7 +16,7 @@ sys.path.append(str(Path(__file__).resolve().parents[3]))
 
 from src.core.io_utils import ensure_dir, read_jsonl, write_jsonl
 from src.core.schema import DATASETS, validate_dataset
-from src.chunking.builders import embeddable_signals, meaningful_value
+from src.chunking.builders import meaningful_value
 from src.chunking.template_matcher import DEFAULT_TEMPLATE_DIR
 from src.retrieval.template_registry import META_FILE, REGISTRY_FILE, VECTORS_FILE
 
@@ -42,45 +42,33 @@ def prefixed_passage(text: str) -> str:
 
 def build_search_text(record: dict[str, Any]) -> str:
     template = record.get("template") or ""
-    intent = embeddable_signals(record.get("intent") or [])
-    signals = embeddable_signals(record.get("signals") or [])
     fields = (
         ("dataset", record.get("dataset")),
         ("component", record.get("component")),
         ("level", record.get("level")),
-        ("event_type", record.get("event_type")),
-        ("event_family", record.get("event_family")),
         ("template", template),
     )
-    lines = [f"{name}: {text}" for name, value in fields if (text := meaningful_value(value))]
-    if intent:
-        lines.append("intent: " + " ".join(str(item) for item in intent))
-    if signals:
-        lines.append("signals: " + " ".join(str(signal) for signal in signals))
-    return "\n".join(lines)
+    return "\n".join(
+        f"{name}: {text}"
+        for name, value in fields
+        if (text := meaningful_value(value))
+    )
 
 
 def registry_record(catalog_record: dict[str, Any], vector_index: int) -> dict[str, Any]:
-    intent = embeddable_signals(catalog_record.get("intent") or [])
-    signals = embeddable_signals(catalog_record.get("signals") or [])
     record = {
         "vector_index": vector_index,
         "template_id": catalog_record["template_id"],
         "dataset": catalog_record["dataset"],
         "template": catalog_record.get("template"),
         "regex": catalog_record.get("regex"),
-        "intent": intent,
         "search_text": build_search_text(catalog_record),
-        "signals": signals,
         "occurrences": 0,
         "priority": int(catalog_record.get("priority") or 0),
     }
     for optional_key in (
         "component",
         "level",
-        "event_type",
-        "event_family",
-        "weak_signals",
         "active",
     ):
         if optional_key in catalog_record:

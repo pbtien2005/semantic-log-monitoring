@@ -1,0 +1,227 @@
+{
+  "config": {
+    "alpha": 0.5,
+    "baseline_mode": "all",
+    "epsilon": 1e-06,
+    "high_threshold": 0.8,
+    "log_level_weight": 0.0,
+    "low_threshold": 0.4,
+    "medium_threshold": 0.6,
+    "min_logs_per_service": 20,
+    "min_windows_per_service": 2,
+    "service_fallback_transition_weight": 0.2,
+    "service_fallback_window_weight": 0.4,
+    "template_weight": 0.4,
+    "transition_weight": 0.35,
+    "window_size": 20,
+    "window_step": 10,
+    "window_weight": 0.25
+  },
+  "metadata": {
+    "baseline_version": 1,
+    "dataset": "hdfs",
+    "min_service_events": 20,
+    "min_windows_per_service": 2,
+    "mode": "all",
+    "scoring_weights": {
+      "service_fallback_transition": 0.2,
+      "service_fallback_window": 0.4,
+      "severity_hint": 0.0,
+      "template": 0.4,
+      "transition": 0.35,
+      "window": 0.25
+    },
+    "smoothing_alpha": 0.5,
+    "thresholds": {
+      "high": 0.8,
+      "low": 0.4,
+      "medium": 0.6
+    },
+    "trained_at": "2026-07-09T03:56:16.659239+00:00"
+  },
+  "previous_template_totals": {
+    "dfs.DataNode$DataXceiver": {
+      "hdfs::E11": 1,
+      "hdfs::E22": 1,
+      "hdfs::E9": 1
+    },
+    "dfs.FSDataset": {
+      "hdfs::E21": 1
+    },
+    "dfs.FSNamesystem": {
+      "hdfs::E11": 1,
+      "hdfs::E5": 1
+    }
+  },
+  "service_template_counts": {
+    "dfs.DataBlockScanner": {
+      "hdfs::E2": 20
+    },
+    "dfs.DataNode": {
+      "hdfs::E18": 1
+    },
+    "dfs.DataNode$DataXceiver": {
+      "hdfs::E3": 80,
+      "hdfs::E4": 80,
+      "hdfs::E5": 292,
+      "hdfs::E6": 2
+    },
+    "dfs.DataNode$PacketResponder": {
+      "hdfs::E11": 311,
+      "hdfs::E9": 292
+    },
+    "dfs.FSDataset": {
+      "hdfs::E21": 263
+    },
+    "dfs.FSNamesystem": {
+      "hdfs::E22": 115,
+      "hdfs::E23": 224,
+      "hdfs::E25": 1,
+      "hdfs::E26": 314,
+      "hdfs::E30": 5
+    }
+  },
+  "service_template_vocab": {
+    "dfs.DataBlockScanner": [
+      "hdfs::E2"
+    ],
+    "dfs.DataNode": [
+      "hdfs::E18"
+    ],
+    "dfs.DataNode$DataXceiver": [
+      "hdfs::E3",
+      "hdfs::E4",
+      "hdfs::E5",
+      "hdfs::E6"
+    ],
+    "dfs.DataNode$PacketResponder": [
+      "hdfs::E11",
+      "hdfs::E9"
+    ],
+    "dfs.FSDataset": [
+      "hdfs::E21"
+    ],
+    "dfs.FSNamesystem": [
+      "hdfs::E22",
+      "hdfs::E23",
+      "hdfs::E25",
+      "hdfs::E26",
+      "hdfs::E30"
+    ]
+  },
+  "service_totals": {
+    "dfs.DataBlockScanner": 20,
+    "dfs.DataNode": 1,
+    "dfs.DataNode$DataXceiver": 454,
+    "dfs.DataNode$PacketResponder": 603,
+    "dfs.FSDataset": 263,
+    "dfs.FSNamesystem": 659
+  },
+  "template_p99_surprise": {
+    "dfs.DataBlockScanner": -0.0,
+    "dfs.DataNode": -0.0,
+    "dfs.DataNode$DataXceiver": 5.102043084063721,
+    "dfs.DataNode$PacketResponder": 0.7244801845473479,
+    "dfs.FSDataset": -0.0,
+    "dfs.FSNamesystem": 6.037073556081635
+  },
+  "transition_counts": {
+    "dfs.DataNode$DataXceiver": {
+      "hdfs::E11": {
+        "hdfs::E6": 1
+      },
+      "hdfs::E22": {
+        "hdfs::E5": 1
+      },
+      "hdfs::E9": {
+        "hdfs::E4": 1
+      }
+    },
+    "dfs.FSDataset": {
+      "hdfs::E21": {
+        "hdfs::E21": 1
+      }
+    },
+    "dfs.FSNamesystem": {
+      "hdfs::E11": {
+        "hdfs::E26": 1
+      },
+      "hdfs::E5": {
+        "hdfs::E22": 1
+      }
+    }
+  },
+  "transition_p99_surprise": {
+    "dfs.DataNode$DataXceiver": 0.6931471805599453,
+    "dfs.FSDataset": -0.0,
+    "dfs.FSNamesystem": 0.8472978603872037
+  },
+  "window_profiles": {
+    "dfs.DataBlockScanner": {
+      "error_ratio_mean": 0.0,
+      "p99_distance": 0.0,
+      "template_mean": {
+        "hdfs::E2": 1.0
+      },
+      "unique_template_ratio_mean": 0.05,
+      "warn_ratio_mean": 0.0,
+      "window_count": 1
+    },
+    "dfs.DataNode": {
+      "error_ratio_mean": 0.0,
+      "p99_distance": 0.0,
+      "template_mean": {},
+      "unique_template_ratio_mean": 0.0,
+      "warn_ratio_mean": 0.0,
+      "window_count": 0
+    },
+    "dfs.DataNode$DataXceiver": {
+      "error_ratio_mean": 0.0,
+      "p99_distance": 1.8708181818181822,
+      "template_mean": {
+        "hdfs::E3": 0.18181818181818182,
+        "hdfs::E4": 0.18181818181818182,
+        "hdfs::E5": 0.6318181818181818,
+        "hdfs::E6": 0.004545454545454546
+      },
+      "unique_template_ratio_mean": 0.10113636363636364,
+      "warn_ratio_mean": 0.18181818181818182,
+      "window_count": 44
+    },
+    "dfs.DataNode$PacketResponder": {
+      "error_ratio_mean": 0.0,
+      "p99_distance": 0.49538983050847474,
+      "template_mean": {
+        "hdfs::E11": 0.514406779661017,
+        "hdfs::E9": 0.48559322033898306
+      },
+      "unique_template_ratio_mean": 0.1,
+      "warn_ratio_mean": 0.0,
+      "window_count": 59
+    },
+    "dfs.FSDataset": {
+      "error_ratio_mean": 0.0,
+      "p99_distance": 0.0,
+      "template_mean": {
+        "hdfs::E21": 1.0
+      },
+      "unique_template_ratio_mean": 0.05,
+      "warn_ratio_mean": 0.0,
+      "window_count": 25
+    },
+    "dfs.FSNamesystem": {
+      "error_ratio_mean": 0.0,
+      "p99_distance": 1.37421875,
+      "template_mean": {
+        "hdfs::E22": 0.17578125,
+        "hdfs::E23": 0.35,
+        "hdfs::E25": 0.0015625,
+        "hdfs::E26": 0.46484375,
+        "hdfs::E30": 0.0078125
+      },
+      "unique_template_ratio_mean": 0.12421875,
+      "warn_ratio_mean": 0.0,
+      "window_count": 64
+    }
+  }
+}

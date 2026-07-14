@@ -41,7 +41,7 @@ flowchart TB
         subgraph RAGTech["RAG Pipeline"]
             direction TB
             RagIngestTech["RAG Ingest / Indexing"]
-            Embedding["Sentence Transformers + PyTorch"]
+            Embedding["Batch Embedding\nSentence Transformers + PyTorch"]
             RagQueryTech["RAG Query / Answering"]
             CLIProxy["CLIProxyAPI"]
             LLM["OpenAI-compatible LLM"]
@@ -79,11 +79,11 @@ flowchart TB
 
 - **React + TypeScript + Vite** là lớp giao diện dashboard.
 - **Nginx** phục vụ frontend và chuyển tiếp các request `/api` vào backend.
-- **Python + Starlette + Uvicorn** là backend API chính.
+- **Python + Starlette + Uvicorn** là backend API chính; với luồng ingest, API chỉ nhận log thô và chuẩn hóa nhẹ trước khi đẩy vào Kafka.
 - **Apache Kafka** tiếp nhận luồng log mới phát sinh.
 - **Python Kafka Worker** đọc log từ Kafka và xử lý dữ liệu trước khi lưu trữ.
 - **RAG Ingest / Indexing** là luồng đưa log đã xử lý vào kho truy xuất của RAG.
-- **Sentence Transformers + PyTorch** tạo embedding phục vụ semantic search và indexing vào Milvus.
+- **Sentence Transformers + PyTorch** tạo embedding theo batch để phục vụ semantic search và indexing vào Milvus.
 - **RAG Query / Answering** là luồng truy xuất evidence, tạo context và gọi LLM để sinh câu trả lời.
 - **Milvus** lưu vector embedding của log.
 - **OpenSearch** lưu log gốc và hỗ trợ truy xuất log theo điều kiện.
@@ -105,7 +105,7 @@ flowchart LR
     subgraph Ingest["2. Ingestion"]
         direction TB
         OfflineScripts["Offline build scripts"]
-        IngestAPI["Ingest API"]
+        IngestAPI["Ingest API\nraw log only"]
         Kafka["Apache Kafka"]
     end
 
@@ -115,7 +115,7 @@ flowchart LR
         Parser["Parse + normalize"]
         Template["Template + entity extraction"]
         Anomaly["Anomaly scoring"]
-        Embedding["Embedding generation"]
+        Embedding["Batch embedding"]
     end
 
     subgraph Store["4. Storage / Index"]
@@ -142,9 +142,10 @@ flowchart LR
     end
 
     Dataset --> OfflineScripts
-    LiveLog --> IngestAPI
-    IngestAPI --> Kafka
-    Kafka --> Worker
+    LiveLog -->|"raw log payload"| IngestAPI
+    IngestAPI -->|"validated raw log"| Kafka
+    IngestAPI -->|"pending raw log"| OpenSearch
+    Kafka -->|"log batch"| Worker
     OfflineScripts --> Parser
     Worker --> Parser
 
@@ -178,10 +179,11 @@ flowchart LR
 
 - Log đến từ hai nguồn: dữ liệu mẫu Apache/OpenStack/HDFS hoặc luồng log mô phỏng.
 - Dữ liệu mẫu được xử lý bằng các offline build scripts.
-- Log mới phát sinh đi qua Ingest API, sau đó được publish vào Kafka.
-- Kafka Worker đọc log từ Kafka và đưa vào pipeline xử lý.
-- Log được parse, chuẩn hóa, nhận diện template, trích xuất entity, chấm điểm bất thường và tạo embedding.
-- Log gốc và metadata được lưu vào OpenSearch.
+- Log mới phát sinh đi qua Ingest API dưới dạng raw log payload. API chỉ kiểm tra JSON, chuẩn hóa các trường cơ bản, ghi trạng thái `pending` vào OpenSearch và publish message vào Kafka.
+- Kafka Worker đọc log từ Kafka theo batch và đưa vào pipeline xử lý semantic.
+- Log được parse, chuẩn hóa, nhận diện template, trích xuất entity và chấm điểm bất thường ở worker/processor, không phải ở API ingest.
+- Các chunk sau xử lý được gom batch để tạo embedding trước khi ghi vào Milvus.
+- Log gốc, metadata cơ bản và trạng thái index được lưu vào OpenSearch để dashboard có thể xem lại và debug ingest.
 - Vector embedding được lưu vào Milvus.
 - Template, chunk và registry artifacts được lưu ở local files để phục vụ retrieval và benchmark.
 
@@ -198,7 +200,7 @@ flowchart LR
 **3. Lý do thiết kế luồng**
 
 - Luồng ingest và luồng query được tách riêng để hệ thống có thể xử lý log liên tục mà không phụ thuộc trực tiếp vào thao tác của người dùng.
-- Kafka giúp hấp thụ log mới phát sinh và cho phép worker xử lý theo batch.
+- Kafka giúp hấp thụ log mới phát sinh và cho phép worker xử lý log, embedding, upsert theo batch.
 - Milvus và OpenSearch được dùng song song nhưng phục vụ hai mục đích khác nhau: Milvus cho semantic search, OpenSearch cho raw log lookup và filter theo trường.
 - RAG chỉ sinh câu trả lời sau khi đã có evidence từ storage, giúp câu trả lời bám vào dữ liệu log thay vì chỉ dựa vào kiến thức chung của LLM.
 
@@ -273,20 +275,20 @@ flowchart TB
 
     subgraph BE["Backend / Application Layer"]
         direction TB
-        API["Starlette API\nchat + ingest + recent logs"]
+        API["Starlette API\nchat + raw ingest + recent logs"]
         Analysis["Analysis Service\nanomaly scoring + RCA ranking"]
     end
 
     subgraph RAGL["RAG Layer"]
         direction TB
-        RagIngest["RAG Ingest / Indexing\nchunk + embedding + vector upsert"]
+        RagIngest["RAG Ingest / Indexing\nbatch embedding + vector upsert"]
         RagQuery["RAG Query / Answering\nretrieve + context + generate"]
     end
 
     subgraph ING["Ingestion & Processing Layer"]
         direction TB
         Kafka["Kafka Topics\nlogs.raw + logs.failed"]
-        Worker["Semantic Worker\nconsume + enrich + upsert"]
+        Worker["Semantic Worker\nbatch consume + enrich + upsert"]
         Processor["Log Processor\nparser + template + entity"]
     end
 
@@ -314,9 +316,9 @@ flowchart TB
 
     Dataset -->|"offline build"| Processor
     Live -->|"POST /api/ingest/logs"| API
-    API -->|"publish normalized log"| Kafka
+    API -->|"publish validated raw log"| Kafka
     Kafka -->|"consume log batch"| Worker
-    Worker -->|"process log records"| Processor
+    Worker -->|"process raw records"| Processor
 
     Processor -->|"raw / normalized logs"| OpenSearch
     Processor -->|"templates and chunks"| Artifacts
@@ -332,7 +334,7 @@ flowchart TB
     RagQuery -->|"template-aware retrieval"| Artifacts
     RagQuery -->|"retrieved evidence"| Analysis
     Analysis -->|"RCA candidates / anomaly context"| RagQuery
-    API -->|"recent logs / raw log lookup"| OpenSearch
+    API -->|"pending write / recent lookup"| OpenSearch
 
     RagQuery -->|"grounded prompt"| Proxy
     Proxy -->|"model call"| LLM
@@ -347,15 +349,15 @@ flowchart TB
 
 - **Frontend Layer**: chứa React Dashboard và Chat UI. Đây là điểm tương tác chính của operator, dùng để xem log, lọc dữ liệu, hỏi đáp và xem kết quả phân tích.
 - **Backend / Application Layer**: chứa Starlette API và các service nghiệp vụ chính. API nhận request từ dashboard; Analysis Service gom anomaly scoring và RCA ranking.
-- **RAG Layer**: gồm hai luồng chính. RAG Ingest/Indexing nhận chunk log đã xử lý, tạo embedding và ghi vector vào Milvus. RAG Query/Answering truy xuất evidence, xây dựng context và gọi LLM để sinh câu trả lời.
-- **Ingestion & Processing Layer**: xử lý log đầu vào. Kafka nhận log mới phát sinh, Semantic Worker đọc log theo batch, còn Log Processor chuẩn hóa log, nhận diện template/entity và chuyển dữ liệu sang RAG Ingest.
+- **RAG Layer**: gồm hai luồng chính. RAG Ingest/Indexing nhận chunk log đã xử lý, tạo embedding theo batch và ghi vector vào Milvus. RAG Query/Answering truy xuất evidence, xây dựng context và gọi LLM để sinh câu trả lời.
+- **Ingestion & Processing Layer**: xử lý log đầu vào. Kafka nhận raw log đã được API kiểm tra cơ bản, Semantic Worker đọc log theo batch, còn Log Processor chuẩn hóa log, nhận diện template/entity và chuyển dữ liệu sang RAG Ingest.
 - **Storage & Index Layer**: lưu trữ dữ liệu đã xử lý. OpenSearch giữ log gốc và trạng thái index, Milvus giữ vector embedding, còn local artifacts giữ dataset/chunk/template phục vụ benchmark và retrieval.
 - **AI Provider Layer**: chứa CLIProxyAPI và LLM. Backend không gọi LLM trực tiếp từ frontend mà đi qua lớp proxy để dễ cấu hình endpoint/model.
 
 **Luồng dữ liệu chính**
 
 1. **Offline dataset flow**: Apache/OpenStack/HDFS được xử lý qua Log Processor, sau đó ghi raw logs vào OpenSearch, template/chunk vào local artifacts và đưa chunk sang RAG Ingest để tạo vector trong Milvus.
-2. **Streaming ingest flow**: live stream mô phỏng gửi log vào API, API publish message vào Kafka, Semantic Worker consume message, Log Processor chuẩn hóa log rồi chuyển kết quả sang RAG Ingest/Indexing.
+2. **Streaming ingest flow**: live stream mô phỏng gửi raw log vào API, API kiểm tra và publish message vào Kafka, Semantic Worker đọc theo batch, Log Processor chuẩn hóa và trích xuất template/entity, sau đó RAG Ingest/Indexing tạo embedding theo batch và ghi vector vào Milvus.
 3. **Query/RAG flow**: dashboard gửi câu hỏi vào API, API gọi RAG Query/Answering, RAG truy xuất evidence từ Milvus và template artifacts, sau đó gọi LLM qua CLIProxyAPI để tạo câu trả lời.
 4. **Analysis flow**: các chức năng anomaly scoring và RCA ranking được gom trong Analysis Service để hỗ trợ RAG và dashboard bằng evidence có cấu trúc.
 

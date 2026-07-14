@@ -115,6 +115,27 @@ describe("dashboard log domain", () => {
     expect(flat.anomalyDecision).toBe("watch");
   });
 
+  it("normalizes Milvus indexing status fields", () => {
+    const indexed = normalizeLog({
+      ...records[0],
+      index_status: "indexed",
+      indexed_at: "2026-07-13T09:30:00Z"
+    });
+    const failed = normalizeLog({
+      ...records[1],
+      index_status: "failed",
+      index_error: "Milvus insert failed"
+    });
+    const unknown = normalizeLog(records[2]);
+
+    expect(indexed.indexStatus).toBe("indexed");
+    expect(indexed.indexedAt).toBe("2026-07-13T09:30:00Z");
+    expect(indexed.indexError).toBeNull();
+    expect(failed.indexStatus).toBe("failed");
+    expect(failed.indexError).toBe("Milvus insert failed");
+    expect(unknown.indexStatus).toBe("unknown");
+  });
+
   it("ranks RCA evidence candidates before the selected incident", () => {
     const logs = [
       normalizeLog({

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
 from src.benchmark.query_bank import QUERY_BANK
 from src.core.io_utils import benchmark_dir, read_jsonl
@@ -31,28 +31,24 @@ def query_ids_for(dataset: str) -> set[str]:
     return {f"{dataset}_q{index:03d}" for index, _ in enumerate(QUERY_BANK[dataset], start=1)}
 
 
-def validate_dataset_benchmark(dataset: str, root: Path) -> dict[str, Any]:
-    dataset = validate_dataset(dataset)
-    bench = benchmark_dir(dataset, root)
-    logs = load_required(bench / "logs.jsonl", "logs.jsonl")
-    qrels = load_required(bench / "qrels_silver.jsonl", "qrels_silver.jsonl")
-    pairs = load_required(bench / "pairs.jsonl", "pairs.jsonl")
-    splits = {
-        "train": load_required(bench / "splits" / "train.jsonl", "splits/train.jsonl"),
-        "dev": load_required(bench / "splits" / "dev.jsonl", "splits/dev.jsonl"),
-        "test": load_required(bench / "splits" / "test.jsonl", "splits/test.jsonl"),
-    }
-
+def validate_logs(logs: list[dict[str, Any]], dataset: str) -> set[str]:
     log_ids: set[str] = set()
     for log in logs:
         validate_log_record(log)
         if log["dataset"] != dataset:
             raise SchemaValidationError(f"Mixed dataset in logs: {log['dataset']}")
-        if log["log_id"] in log_ids:
-            raise SchemaValidationError(f"Duplicate log_id: {log['log_id']}")
-        log_ids.add(str(log["log_id"]))
+        log_id = str(log["log_id"])
+        if log_id in log_ids:
+            raise SchemaValidationError(f"Duplicate log_id: {log_id}")
+        log_ids.add(log_id)
+    return log_ids
 
-    expected_query_ids = query_ids_for(dataset)
+
+def validate_qrels(
+    qrels: list[dict[str, Any]],
+    expected_query_ids: set[str],
+    log_ids: set[str],
+) -> tuple[list[str], list[str]]:
     seen_qrels: set[str] = set()
     no_positive: list[str] = []
     needs_review: list[str] = []
@@ -70,43 +66,68 @@ def validate_dataset_benchmark(dataset: str, root: Path) -> dict[str, Any]:
         negatives = set(qrel["hard_negative_log_ids"])
         if positives & negatives:
             raise SchemaValidationError(f"{query_id} has positive/negative overlap")
-        for log_id in positives | negatives:
-            if log_id not in log_ids:
-                raise SchemaValidationError(f"{query_id} references unknown log_id: {log_id}")
+        unknown_log_ids = (positives | negatives) - log_ids
+        if unknown_log_ids:
+            unknown_log_id = sorted(unknown_log_ids)[0]
+            raise SchemaValidationError(f"{query_id} references unknown log_id: {unknown_log_id}")
         if not positives:
             no_positive.append(query_id)
         if qrel["needs_review"]:
             needs_review.append(query_id)
+    return no_positive, needs_review
 
-    pair_query_ids: set[str] = set()
+
+def validate_pairs(
+    pairs: list[dict[str, Any]],
+    dataset: str,
+    expected_query_ids: set[str],
+    log_ids: set[str],
+) -> None:
     for pair in pairs:
         validate_pair_record(pair)
+        query_id = str(pair["query_id"])
         if pair["dataset"] != dataset:
             raise SchemaValidationError(f"Mixed dataset in pairs: {pair['dataset']}")
-        if pair["query_id"] not in expected_query_ids:
-            raise SchemaValidationError(f"Unknown pair query_id: {pair['query_id']}")
+        if query_id not in expected_query_ids:
+            raise SchemaValidationError(f"Unknown pair query_id: {query_id}")
         if pair["positive_log_id"] not in log_ids or pair["negative_log_id"] not in log_ids:
-            raise SchemaValidationError(f"Pair references unknown log_id: {pair['query_id']}")
+            raise SchemaValidationError(f"Pair references unknown log_id: {query_id}")
         if pair["positive_log_id"] == pair["negative_log_id"]:
-            raise SchemaValidationError(f"Pair has same positive/negative log: {pair['query_id']}")
-        pair_query_ids.add(str(pair["query_id"]))
+            raise SchemaValidationError(f"Pair has same positive/negative log: {query_id}")
 
+
+def validate_splits(splits: dict[str, list[dict[str, Any]]], pair_count: int) -> None:
     split_query_ids: dict[str, set[str]] = {}
     split_pair_total = 0
     for split_name, records in splits.items():
-        ids = {str(record["query_id"]) for record in records}
-        split_query_ids[split_name] = ids
+        split_query_ids[split_name] = {str(record["query_id"]) for record in records}
         split_pair_total += len(records)
         for record in records:
             validate_pair_record(record)
-    if split_pair_total != len(pairs):
+    if split_pair_total != pair_count:
         raise SchemaValidationError("Split pair counts do not sum to pairs.jsonl count")
-    if split_query_ids["train"] & split_query_ids["dev"]:
-        raise SchemaValidationError("train/dev query_id overlap")
-    if split_query_ids["train"] & split_query_ids["test"]:
-        raise SchemaValidationError("train/test query_id overlap")
-    if split_query_ids["dev"] & split_query_ids["test"]:
-        raise SchemaValidationError("dev/test query_id overlap")
+    for left, right in (("train", "dev"), ("train", "test"), ("dev", "test")):
+        if split_query_ids[left] & split_query_ids[right]:
+            raise SchemaValidationError(f"{left}/{right} query_id overlap")
+
+
+def validate_dataset_benchmark(dataset: str, root: Path) -> dict[str, Any]:
+    dataset = validate_dataset(dataset)
+    bench = benchmark_dir(dataset, root)
+    logs = load_required(bench / "logs.jsonl", "logs.jsonl")
+    qrels = load_required(bench / "qrels_silver.jsonl", "qrels_silver.jsonl")
+    pairs = load_required(bench / "pairs.jsonl", "pairs.jsonl")
+    splits = {
+        "train": load_required(bench / "splits" / "train.jsonl", "splits/train.jsonl"),
+        "dev": load_required(bench / "splits" / "dev.jsonl", "splits/dev.jsonl"),
+        "test": load_required(bench / "splits" / "test.jsonl", "splits/test.jsonl"),
+    }
+
+    log_ids = validate_logs(logs, dataset)
+    expected_query_ids = query_ids_for(dataset)
+    no_positive, needs_review = validate_qrels(qrels, expected_query_ids, log_ids)
+    validate_pairs(pairs, dataset, expected_query_ids, log_ids)
+    validate_splits(splits, len(pairs))
 
     return {
         "logs": len(logs),

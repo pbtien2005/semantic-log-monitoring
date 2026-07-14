@@ -31,6 +31,41 @@ class QueryNormalizerTests(unittest.TestCase):
         self.assertEqual(plan.level, "ERROR")
         self.assertEqual(plan.sort.field if plan.sort else None, "timestamp_ms")
 
+    def test_summary_query_sets_summary_answer_mode_without_strategy_field(self) -> None:
+        plan = plan_query(
+            "tong hop cac loi ERROR trong openstack",
+            PlannerOptions(use_llm=False),
+        )
+
+        self.assertEqual(plan.answer_mode, "summary")
+        self.assertEqual(plan.dataset, "openstack")
+        self.assertEqual(plan.level, "ERROR")
+        self.assertTrue(plan.use_vector_search)
+        self.assertNotIn("strategy", plan.model_dump())
+
+    def test_find_log_query_sets_search_log_answer_mode_without_strategy_field(self) -> None:
+        plan = plan_query(
+            "tim log ERROR apache lien quan mod_jk workerEnv error state",
+            PlannerOptions(use_llm=False),
+        )
+
+        self.assertEqual(plan.answer_mode, "search_log")
+        self.assertEqual(plan.dataset, "apache")
+        self.assertEqual(plan.level, "ERROR")
+        self.assertTrue(plan.use_vector_search)
+        self.assertNotIn("strategy", plan.model_dump())
+
+    def test_root_cause_query_sets_root_cause_answer_mode_without_strategy_field(self) -> None:
+        plan = plan_query(
+            "giai thich nguyen nhan loi mod_jk workerEnv error state trong apache",
+            PlannerOptions(use_llm=False),
+        )
+
+        self.assertEqual(plan.answer_mode, "root_cause")
+        self.assertEqual(plan.dataset, "apache")
+        self.assertTrue(plan.use_vector_search)
+        self.assertNotIn("strategy", plan.model_dump())
+
 
 if __name__ == "__main__":
     unittest.main()

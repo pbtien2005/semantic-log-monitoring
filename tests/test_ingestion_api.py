@@ -56,6 +56,16 @@ class IngestionApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_ingest_logs_endpoint_rejects_non_object_json(self) -> None:
+        response = TestClient(create_app(), raise_server_exceptions=False).post(
+            "/api/ingest/logs",
+            content=json.dumps([]),
+            headers={"content-type": "application/json"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {"error": "json payload must be an object"})
+
     def test_recent_logs_endpoint_reads_raw_log_store(self) -> None:
         with patch("app.chat_api.raw_log_store") as raw_log_store:
             raw_log_store.recent_logs.return_value = [

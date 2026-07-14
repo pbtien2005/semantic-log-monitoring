@@ -1,0 +1,24 @@
+{
+  "anomaly_count": 18,
+  "created_at": "2026-07-14",
+  "dataset_version": "groundtruth-v1.0",
+  "files": {
+    "anomalies.jsonl": {
+      "sha256": "5e572aa95d2ab2a351ceb286d040de8ef462c4b8120dcaf8ba58315df102921a"
+    },
+    "groundtruth_queries.jsonl": {
+      "sha256": "f9a0fad5ffdb764675c7bf488e18bfeb37ac3974633a78018e2cc7674edbdf61"
+    },
+    "incidents.jsonl": {
+      "sha256": "d1ecf8fbc31d0856ff390984b104d4a55b06663795dd53290954db66e1abe547"
+    },
+    "logs.jsonl": {
+      "sha256": "cd951441e3051dfa58f374fe153a6813c79612d382f75be6bb624c827d88439e"
+    }
+  },
+  "incident_count": 15,
+  "log_count": 2000,
+  "notes": "Initial deterministic synthetic controlled evaluation dataset.",
+  "query_count": 50,
+  "seed": 20260714
+}

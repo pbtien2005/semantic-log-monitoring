@@ -1,0 +1,113 @@
+{
+  "scenario_summary": "Distributed semantic log monitoring demo mixing OpenStack-style control-plane logs and HDFS-style block logs. Normal create-server and block-transfer flows dominate. Three pre-labeled anomalies test causal RCA, burst/template behavior, and rare entity-linked transitions.",
+  "anomalies": [
+    {
+      "log_id": "demo:0034",
+      "anomaly_type": "causal_downstream_failure",
+      "anomaly_score_expected": 0.94,
+      "reason": "nova-api returns the final 500, but the earlier cinder-volume WARN shows ceph-az1 latency p95=42000ms and high queue depth before attach retries and os-brick timeout.",
+      "signals": ["sequence_anomaly", "entity_linkage"]
+    },
+    {
+      "log_id": "demo:0044",
+      "anomaly_type": "burst_network_binding_failure",
+      "anomaly_score_expected": 0.91,
+      "reason": "A normally recoverable connection-reset template appears repeatedly across multiple port-binding requests within 14 seconds, followed by a 503 for req-port-3004.",
+      "signals": ["burst_anomaly", "sequence_anomaly", "entity_linkage"]
+    },
+    {
+      "log_id": "demo:0050",
+      "anomaly_type": "rare_entity_transition",
+      "anomaly_score_expected": 0.89,
+      "reason": "The same active instance and boot volume enter an unusual detach-then-attach sequence during rebuild validation, ending in duplicate block device mapping.",
+      "signals": ["template_rarity", "sequence_anomaly", "entity_linkage"]
+    }
+  ],
+  "rca_ground_truth": [
+    {
+      "incident_log_id": "demo:0034",
+      "root_cause_log_id": "demo:0028",
+      "root_cause_summary": "The root cause is storage backend ceph-az1 saturation/latency for volume vol-774, not the final nova-api 500.",
+      "evidence_log_ids": ["demo:0027", "demo:0028", "demo:0029", "demo:0030", "demo:0031", "demo:0032", "demo:0033", "demo:0034"],
+      "timeline_explanation": "The request is scheduled and network setup succeeds. cinder-scheduler selects ceph-az1, then cinder-volume reports p95 latency and queue depth before attach timeout. nova-compute retries twice, os-brick finally fails, nova-compute aborts the build, and nova-api emits the user-visible 500.",
+      "why_not_other_logs": "demo:0032 and demo:0034 are consequences. The first causal degradation appears at demo:0028, and it shares request_id req-create-2002, instance_id inst-44f2, volume vol-774, and downstream storage service context."
+    },
+    {
+      "incident_log_id": "demo:0044",
+      "root_cause_log_id": "demo:0039",
+      "root_cause_summary": "The root cause is an OVSDB connection reset from host net-17, which causes a burst of port-binding retries and delayed convergence.",
+      "evidence_log_ids": ["demo:0039", "demo:0040", "demo:0041", "demo:0042", "demo:0043", "demo:0044"],
+      "timeline_explanation": "A host-level OVSDB reset appears without a request_id, then several request-scoped port bindings retry the same reset template. The affected request req-port-3004 reaches the network agent, binding is delayed, and the API gateway returns 503.",
+      "why_not_other_logs": "The WARN retries are symptoms of the initial host-level OVSDB reset. Keyword search for only req-port-3004 might miss demo:0039 because it has no request_id but is causally upstream by host/service/time."
+    },
+    {
+      "incident_log_id": "demo:0050",
+      "root_cause_log_id": "demo:0046",
+      "root_cause_summary": "The root cause is stale connector metadata for volume vol-551 on instance inst-9a77 after migration, which makes rebuild validation issue conflicting detach/attach operations.",
+      "evidence_log_ids": ["demo:0045", "demo:0046", "demo:0047", "demo:0048", "demo:0049", "demo:0050"],
+      "timeline_explanation": "The instance is active and stable. cinder-volume detects stale connector mapping for the same instance and volume. Rebuild validation then attempts to reuse the boot volume, detach is refused because the device is busy, attach is retried while detach is pending, and nova-compute detects duplicate block device mapping.",
+      "why_not_other_logs": "demo:0048 and demo:0049 are transition symptoms. demo:0046 is earlier, shares instance_id inst-9a77 and volume vol-551, and explains why mutually inconsistent device operations appear."
+    }
+  ],
+  "test_queries": [
+    {
+      "query": "Tìm toàn bộ log của request req-create-2002 và giải thích request này kết thúc thế nào.",
+      "expected_retrieved_log_ids": ["demo:0023", "demo:0024", "demo:0025", "demo:0026", "demo:0027", "demo:0028", "demo:0029", "demo:0030", "demo:0031", "demo:0032", "demo:0033", "demo:0034"],
+      "expected_answer": "req-create-2002 failed with status 500 at demo:0034 after volume attach for inst-44f2 timed out. The important evidence is storage latency on ceph-az1 at demo:0028, attach timeout at demo:0029, retries at demo:0030-demo:0031, os-brick failure at demo:0032, and build abort at demo:0033.",
+      "why_this_tests_the_system": "Tests exact request_id retrieval plus chronological aggregation across API, scheduler, compute, network, and storage services."
+    },
+    {
+      "query": "Vì sao request req-create-2002 lỗi?",
+      "expected_retrieved_log_ids": ["demo:0028", "demo:0029", "demo:0030", "demo:0031", "demo:0032", "demo:0033", "demo:0034"],
+      "expected_answer": "The request failed because cinder-volume backend ceph-az1 was slow/saturated for volume vol-774. The root evidence is demo:0028, followed by attach timeout and compute retries. demo:0034 is only the final user-visible 500.",
+      "why_this_tests_the_system": "Tests RCA reasoning where the root cause is a WARN before the final ERROR."
+    },
+    {
+      "query": "RCA cho log_id=demo:0044",
+      "expected_retrieved_log_ids": ["demo:0039", "demo:0040", "demo:0041", "demo:0042", "demo:0043", "demo:0044"],
+      "expected_answer": "Root cause is demo:0039: OVSDB connection reset by peer from host net-17. It triggered repeated port-binding retries at demo:0040-demo:0042, delayed binding at demo:0043, and the final 503 at demo:0044.",
+      "why_this_tests_the_system": "Tests RCA when the root cause log lacks the final request_id and must be linked by service, host, template, and time window."
+    },
+    {
+      "query": "Có anomaly nào trong khoảng 10:03:00 đến 10:06:30 không?",
+      "expected_retrieved_log_ids": ["demo:0034", "demo:0044", "demo:0050"],
+      "expected_answer": "There are three anomalies: demo:0034 storage-backed create-server failure, demo:0044 network binding burst failure, and demo:0050 rare duplicate block device mapping during rebuild validation.",
+      "why_this_tests_the_system": "Tests time-window filtering and anomaly summary instead of single-log lookup."
+    },
+    {
+      "query": "Dịch vụ lưu trữ có bị chậm làm máy ảo tạo thất bại không?",
+      "expected_retrieved_log_ids": ["demo:0028", "demo:0029", "demo:0032", "demo:0033", "demo:0034"],
+      "expected_answer": "Yes. The logs do not say 'dịch vụ lưu trữ bị chậm' literally, but demo:0028 says volume backend ceph-az1 latency p95=42000ms and queue_depth=87. That causes cinder attach timeout, os-brick failure, build abort, and nova-api 500.",
+      "why_this_tests_the_system": "Tests semantic retrieval where the natural-language query differs from log keywords such as volume backend, latency, ceph, os-brick, and attach timeout."
+    },
+    {
+      "query": "Có dấu hiệu nhiều lỗi giống nhau xảy ra liên tiếp ở network không?",
+      "expected_retrieved_log_ids": ["demo:0039", "demo:0040", "demo:0041", "demo:0042", "demo:0043", "demo:0044"],
+      "expected_answer": "Yes. The OVSDB reset starts at demo:0039, then the same retry template appears for several requests at demo:0040-demo:0042 within seconds, followed by delayed binding and 503. This is a burst anomaly.",
+      "why_this_tests_the_system": "Tests template-based retrieval and burst detection across similar but not identical log lines."
+    },
+    {
+      "query": "Instance inst-9a77 gặp chuyện gì với volume vol-551?",
+      "expected_retrieved_log_ids": ["demo:0007", "demo:0008", "demo:0045", "demo:0046", "demo:0047", "demo:0048", "demo:0049", "demo:0050"],
+      "expected_answer": "inst-9a77 was created normally and vol-551 attached successfully at demo:0007-demo:0008. Later, stale connector mapping at demo:0046 caused a rare detach/attach conflict during rebuild validation, ending with duplicate block device mapping at demo:0050.",
+      "why_this_tests_the_system": "Tests entity linkage over a longer time span and distinguishes previous normal state from later anomalous transition."
+    }
+  ],
+  "expected_demo_flow": [
+    "Step 1: Stream demo:0001-demo:0027 as mostly normal OpenStack and HDFS activity.",
+    "Step 2: Stream demo:0028-demo:0034; dashboard should mark demo:0034 and surface storage evidence.",
+    "Step 3: Stream demo:0035-demo:0044; dashboard should identify burst/template anomaly ending at demo:0044.",
+    "Step 4: Stream demo:0045-demo:0050; dashboard should flag rare same-instance/same-volume transition.",
+    "Step 5: User asks RCA/chat queries and system answers with cited log_id chains.",
+    "Step 6: Compare detected anomalies, root causes, evidence, and citations against this ground truth."
+  ],
+  "evaluation_criteria": [
+    "Detect demo:0034, demo:0044, and demo:0050 as anomalies.",
+    "Rank demo:0028, demo:0039, and demo:0046 as root causes for their incidents.",
+    "Retrieve the expected evidence chains without requiring exact keyword overlap.",
+    "Cite log_id values in every RCA answer.",
+    "Avoid treating only the final ERROR as the root cause.",
+    "Keep noisy unrelated normal logs out of the top retrieved evidence.",
+    "Preserve entity linkage across request_id, instance_id, block_id, volume id, host, and service/time context."
+  ]
+}

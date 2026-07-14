@@ -14,20 +14,6 @@ from src.core.io_utils import chunking_dir, ensure_dir, read_jsonl, write_jsonl
 from src.core.schema import DATASETS, validate_dataset
 
 
-def intent_from_template(metadata: dict[str, Any]) -> list[str]:
-    values: list[str] = []
-    for value in (metadata.get("event_type"), metadata.get("event_family")):
-        if value and value not in values:
-            values.append(str(value))
-    for signal in metadata.get("signals") or []:
-        signal = str(signal)
-        if signal.startswith("level_") or signal.startswith("has_"):
-            continue
-        if signal not in values:
-            values.append(signal)
-    return values
-
-
 def catalog_record(template_chunk: dict[str, Any]) -> dict[str, Any]:
     metadata = template_chunk.get("metadata") if isinstance(template_chunk.get("metadata"), dict) else {}
     template = str(metadata.get("template") or template_chunk.get("template") or "")
@@ -40,11 +26,6 @@ def catalog_record(template_chunk: dict[str, Any]) -> dict[str, Any]:
         "level": template_chunk.get("level"),
         "template": template,
         "regex": regex_from_template(template),
-        "intent": intent_from_template(metadata),
-        "event_type": metadata.get("event_type") or template_chunk.get("event_type"),
-        "event_family": metadata.get("event_family") or template_chunk.get("event_family"),
-        "signals": metadata.get("signals") or [],
-        "weak_signals": metadata.get("weak_signals") or [],
         "priority": 100,
         "active": True,
     }

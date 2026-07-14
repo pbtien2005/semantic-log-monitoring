@@ -28,6 +28,12 @@ import { requestChatAnswer } from "./api/chat";
 import "./styles.css";
 
 const LEVELS = ["ERROR", "WARN", "NOTICE", "INFO", "DEBUG", "UNKNOWN"];
+const RCA_WORTHY_REASONS = new Set([
+  "new_template_transition",
+  "new_previous_template_for_transition",
+  "new_template_for_service",
+  "window_error_ratio_spike"
+]);
 
 type ChatMessage = {
   id: number;
@@ -259,7 +265,7 @@ function App() {
           }
         >
           <LogStream
-            logs={streamPaused ? [] : visibleRecords.slice(0, 12)}
+            logs={streamPaused ? [] : visibleRecords}
             paused={streamPaused}
             onRcaRequest={handleRcaRequest}
           />
@@ -418,18 +424,29 @@ function TrafficChart({ points }: { points: ReturnType<typeof buildTrafficSeries
 }
 
 function isActionableAnomaly(log: DashboardLog): boolean {
+  return log.anomalyDecision === "anomalous" || log.anomalyLevel === "high";
+}
+
+function hasAnomalySignal(log: DashboardLog): boolean {
   return (
-    log.anomalyDecision === "anomalous" ||
-    log.anomalyDecision === "watch" ||
-    log.anomalyLevel === "high" ||
-    log.anomalyLevel === "medium"
+    !isActionableAnomaly(log) &&
+    log.anomalyScore !== null &&
+    (log.anomalyDecision === "watch" || log.anomalyLevel === "medium" || log.anomalyLevel === "low")
+  );
+}
+
+function shouldShowRcaButton(log: DashboardLog): boolean {
+  if (log.anomalyDecision === "anomalous" || log.anomalyLevel === "high") {
+    return true;
+  }
+  return (
+    log.level === "ERROR" &&
+    (log.anomalyScore ?? 0) >= 0.6 &&
+    log.anomalyReasons.some((reason) => RCA_WORTHY_REASONS.has(reason))
   );
 }
 
 function anomalyLabel(log: DashboardLog): string {
-  if (log.anomalyDecision === "watch") {
-    return "WATCH";
-  }
   if (log.anomalyDecision === "anomalous" || log.anomalyLevel === "high") {
     return "ANOMALY";
   }
@@ -441,11 +458,11 @@ function formatAnomalyScore(score: number | null): string {
 }
 
 function buildAnomalyTooltip(log: DashboardLog): string {
-  if (!isActionableAnomaly(log)) {
+  if (!isActionableAnomaly(log) && !hasAnomalySignal(log)) {
     return "";
   }
   const reasons = log.anomalyReasons.length ? log.anomalyReasons.join(", ") : "no reason payload";
-  return `\nAnomaly: ${log.anomalyDecision} / ${log.anomalyLevel} score=${formatAnomalyScore(log.anomalyScore)} baseline=${log.anomalyBaselineStatus}\nReasons: ${reasons}`;
+  return `\nAnomaly signal: ${log.anomalyDecision} / ${log.anomalyLevel} score=${formatAnomalyScore(log.anomalyScore)} baseline=${log.anomalyBaselineStatus}\nReasons: ${reasons}`;
 }
 
 function buildRcaPrompt(log: DashboardLog): string {
@@ -479,7 +496,59 @@ function toChatLogPayload(log: DashboardLog): Record<string, unknown> {
     anomaly_decision: log.anomalyDecision,
     anomaly_baseline_status: log.anomalyBaselineStatus,
     anomaly_reasons: log.anomalyReasons,
-    anomaly_components: log.anomalyComponents
+    anomaly_components: log.anomalyComponents,
+    index_status: log.indexStatus,
+    indexed_at: log.indexedAt,
+    index_error: log.indexError
+  };
+}
+
+function IndexStatusBadge({ log }: { log: DashboardLog }) {
+  const meta = getIndexStatusMeta(log);
+  return (
+    <span className={`index-status-pill ${log.indexStatus}`} aria-label={meta.ariaLabel} title={meta.title}>
+      {meta.icon}
+      <span>{meta.label}</span>
+    </span>
+  );
+}
+
+function getIndexStatusMeta(log: DashboardLog): {
+  label: string;
+  ariaLabel: string;
+  title: string;
+  icon: ReactNode;
+} {
+  if (log.indexStatus === "indexed") {
+    return {
+      label: "Milvus",
+      ariaLabel: "Milvus indexed",
+      title: log.indexedAt ? `Đã embedding và lưu vào Milvus lúc ${log.indexedAt}` : "Đã embedding và lưu vào Milvus",
+      icon: <CheckCircle2 size={13} />
+    };
+  }
+  if (log.indexStatus === "pending") {
+    return {
+      label: "Embedding",
+      ariaLabel: "Embedding pending",
+      title: "Đang chờ semantic worker embedding và upsert vào Milvus",
+      icon: <Clock3 size={13} />
+    };
+  }
+  if (log.indexStatus === "failed") {
+    const error = log.indexError ?? "không rõ lỗi";
+    return {
+      label: "Index lỗi",
+      ariaLabel: "Milvus index failed",
+      title: `Lỗi embedding/Milvus: ${error}`,
+      icon: <AlertTriangle size={13} />
+    };
+  }
+  return {
+    label: "Chưa rõ",
+    ariaLabel: "Milvus index status unknown",
+    title: "Log chưa có index_status từ API",
+    icon: <Database size={13} />
   };
 }
 
@@ -522,11 +591,21 @@ function LogStream({
     <div className="log-stream">
       {logs.map((log, index) => {
         const isAnomaly = isActionableAnomaly(log);
+        const hasSignal = hasAnomalySignal(log);
+        const showRca = shouldShowRcaButton(log);
         const tooltipText = `${log.timestamp || "-"} ${log.level} ${log.service}: ${log.message}${buildAnomalyTooltip(log)}`;
+        const rowClasses = [
+          "log-row",
+          log.level.toLowerCase(),
+          isAnomaly ? `anomaly-${log.anomalyLevel}` : "",
+          isAnomaly ? "has-anomaly" : "",
+          hasSignal ? "has-signal" : "",
+          showRca ? "rca-worthy" : ""
+        ].filter(Boolean).join(" ");
         return (
           <article
             key={`${log.timestamp}-${index}`}
-            className={`log-row ${log.level.toLowerCase()} anomaly-${log.anomalyLevel}${isAnomaly ? " has-anomaly" : ""}`}
+            className={rowClasses}
             aria-label="live log row"
             data-log-tooltip={tooltipText}
             onBlur={() => setTooltip(null)}
@@ -542,15 +621,22 @@ function LogStream({
             <strong className="log-level-badge">{log.level}</strong>
             <b>{log.service}</b>
             <span className="log-message">{log.message}</span>
+            <IndexStatusBadge log={log} />
             {isAnomaly ? (
               <span className={`anomaly-pill ${log.anomalyDecision}`}>
                 {anomalyLabel(log)}
                 <small>{formatAnomalyScore(log.anomalyScore)}</small>
               </span>
+            ) : hasSignal ? (
+              <span
+                className={`anomaly-signal ${log.anomalyLevel}`}
+                aria-label={`Anomaly signal score ${formatAnomalyScore(log.anomalyScore)}`}
+                title={`Anomaly signal ${formatAnomalyScore(log.anomalyScore)}`}
+              />
             ) : (
               <span className="anomaly-placeholder" aria-hidden="true" />
             )}
-            {isAnomaly ? (
+            {showRca ? (
               <button
                 className="rca-button"
                 type="button"

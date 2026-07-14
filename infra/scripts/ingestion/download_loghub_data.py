@@ -10,7 +10,7 @@ from typing import NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
 from src.core.io_utils import ensure_dir, raw_dir
 from src.core.schema import DATASETS, validate_dataset

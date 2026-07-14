@@ -50,16 +50,17 @@ class ChunkingEnrichmentTests(unittest.TestCase):
 
         self.assertNotIn("component:", embed_text)
         self.assertNotIn("unknown", embed_text)
-        self.assertIn("event_type: backend_worker_error", embed_text)
-        self.assertIn("event_family: apache_backend", embed_text)
+        self.assertNotIn("event_type:", embed_text)
+        self.assertNotIn("event_family:", embed_text)
+        self.assertNotIn("signals:", embed_text)
         self.assertIn("template: mod_jk child workerEnv in error state <state_code>", embed_text)
         self.assertIn("message: mod_jk child workerEnv in error state 6", embed_text)
-        self.assertIn("backend_down", metadata["signals"])
-        self.assertIn("worker_error", metadata["signals"])
-        self.assertIn("unknown", metadata["weak_signals"])
-        self.assertEqual(metadata["event_type"], "backend_worker_error")
+        self.assertNotIn("signals", metadata)
+        self.assertNotIn("weak_signals", metadata)
+        self.assertNotIn("event_type", metadata)
+        self.assertNotIn("event_family", metadata)
 
-    def test_domain_event_signals_are_added_for_known_patterns(self) -> None:
+    def test_domain_event_signals_are_not_inferred_by_rule(self) -> None:
         chunk = build_line_chunk(
             log_record(
                 dataset="apache",
@@ -70,10 +71,11 @@ class ChunkingEnrichmentTests(unittest.TestCase):
 
         metadata = chunk["metadata"]
 
-        self.assertEqual(metadata["event_type"], "directory_index_forbidden")
-        self.assertEqual(metadata["event_family"], "apache_access")
-        self.assertIn("directory_forbidden", metadata["signals"])
-        self.assertIn("permission_denied", metadata["signals"])
+        self.assertNotIn("event_type", metadata)
+        self.assertNotIn("event_family", metadata)
+        self.assertNotIn("signals", metadata)
+        self.assertNotIn("weak_signals", metadata)
+        self.assertIn("<path>", metadata["template"])
         self.assertNotIn("unknown", chunk["embed_text"])
 
     def test_contextual_number_normalization_preserves_meaning(self) -> None:
@@ -99,7 +101,7 @@ class ChunkingEnrichmentTests(unittest.TestCase):
             "[instance: <instance_id>] took <duration_slow> seconds to build instance.",
         )
 
-    def test_template_chunks_merge_signals_and_weak_signals(self) -> None:
+    def test_template_chunks_do_not_merge_rule_based_signals(self) -> None:
         lines = [
             build_line_chunk(
                 log_record(
@@ -112,9 +114,12 @@ class ChunkingEnrichmentTests(unittest.TestCase):
 
         template = build_template_chunks(lines)[0]
 
-        self.assertIn("backend_down", template["metadata"]["signals"])
-        self.assertIn("unknown", template["metadata"]["weak_signals"])
-        self.assertIn("event_type: backend_worker_error", template["embed_text"])
+        self.assertNotIn("signals", template["metadata"])
+        self.assertNotIn("weak_signals", template["metadata"])
+        self.assertNotIn("event_type", template["metadata"])
+        self.assertNotIn("event_family", template["metadata"])
+        self.assertNotIn("event_type:", template["embed_text"])
+        self.assertNotIn("signals:", template["embed_text"])
         self.assertNotIn("unknown", template["embed_text"])
 
     def test_quality_metrics_capture_signal_and_template_health(self) -> None:
@@ -133,11 +138,11 @@ class ChunkingEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(metrics["total_logs"], 1)
         self.assertEqual(metrics["total_templates"], 1)
-        self.assertEqual(metrics["weak_signal_ratio"], "100.0%")
-        self.assertEqual(metrics["unknown_signal_ratio"], "100.0%")
+        self.assertEqual(metrics["weak_signal_ratio"], "0.0%")
+        self.assertEqual(metrics["unknown_signal_ratio"], "0.0%")
         self.assertIn("avg_embed_text_length", metrics)
 
-    def test_line_chunk_uses_fixed_catalog_template_id(self) -> None:
+    def test_line_chunk_uses_fixed_catalog_template_id_without_manual_semantic_labels(self) -> None:
         matcher = TemplateMatcher.from_records(
             [
                 {
@@ -168,8 +173,13 @@ class ChunkingEnrichmentTests(unittest.TestCase):
         self.assertEqual(chunk["metadata"]["template_match_status"], "matched")
         self.assertEqual(chunk["metadata"]["template_match_method"], "regex")
         self.assertEqual(chunk["metadata"]["template_slots"]["state_code"], "6")
-        self.assertEqual(chunk["metadata"]["intent"], ["backend_worker_error", "apache_backend"])
-        self.assertEqual(chunk["metadata"]["event_type"], "backend_worker_error")
+        self.assertNotIn("intent", chunk["metadata"])
+        self.assertNotIn("signals", chunk["metadata"])
+        self.assertNotIn("weak_signals", chunk["metadata"])
+        self.assertNotIn("event_type", chunk["metadata"])
+        self.assertNotIn("event_family", chunk["metadata"])
+        self.assertNotIn("intent:", chunk["embed_text"])
+        self.assertNotIn("event_type:", chunk["embed_text"])
 
     def test_catalog_miss_is_explicit_but_keeps_dynamic_template_id(self) -> None:
         matcher = TemplateMatcher.from_records(
@@ -225,6 +235,11 @@ class ChunkingEnrichmentTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["template_id"], "template::catalog::backend-worker-error")
         self.assertEqual(rows[0]["payload"]["template_id"], "template::catalog::backend-worker-error")
+        self.assertNotIn("intent", rows[0]["payload"])
+        self.assertNotIn("signals", rows[0]["payload"])
+        self.assertNotIn("weak_signals", rows[0]["payload"])
+        self.assertNotIn("event_type", rows[0]["payload"])
+        self.assertNotIn("event_family", rows[0]["payload"])
 
     def test_template_matcher_picks_highest_priority_and_exposes_slots(self) -> None:
         matcher = TemplateMatcher.from_records(

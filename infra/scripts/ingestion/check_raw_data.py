@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from download_loghub_data import inspect_dataset, print_manual_instructions, print_status

@@ -8,6 +8,7 @@ frontend/public/dashboard-data.json
 .ruff_cache/
 .smoke/
 infra/milvus/volumes/
+infra/opensearch/data/
 infra/cliproxyapi/auth/
 .env
 .env.*

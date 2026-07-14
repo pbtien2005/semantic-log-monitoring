@@ -286,10 +286,63 @@ class KafkaWorkerTest(unittest.TestCase):
             records = [json.loads(line) for line in pending_path.read_text(encoding="utf-8").splitlines()]
 
         self.assertEqual(len(records), 1)
+        self.assertEqual(
+            sorted(records[0]),
+            ["candidate_id", "dataset", "draft_regex", "occurrences", "searchable", "status", "template"],
+        )
+        self.assertTrue(records[0]["candidate_id"].startswith("template::apache::"))
         self.assertEqual(records[0]["status"], "pending")
-        self.assertEqual(records[0]["active"], False)
+        self.assertTrue(records[0]["searchable"])
         self.assertEqual(records[0]["template"], "mod_jk child workerEnv in error state <state_code>")
         self.assertEqual(records[0]["occurrences"], 1)
+
+    def test_process_records_attaches_candidate_id_to_dynamic_log_rows(self) -> None:
+        class FakeVector:
+            def tolist(self) -> list[float]:
+                return [0.1] * 768
+
+        class FakeModel:
+            def encode(self, texts: list[str], **_: Any) -> list[FakeVector]:
+                return [FakeVector() for _ in texts]
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.rows: list[dict[str, Any]] = []
+
+            def upsert(self, *, collection_name: str, data: list[dict[str, Any]]) -> dict[str, int]:
+                self.rows.extend(data)
+                return {"upsert_count": len(data)}
+
+            def flush(self, collection_name: str) -> None:
+                self.flushed_collection = collection_name
+
+        client = FakeClient()
+
+        process_records(
+            [
+                {
+                    "log_id": "payment-prod:abc",
+                    "dataset": "payment-prod",
+                    "source_id": "payment-api-01",
+                    "raw_log": "checkout failed for request req-1",
+                    "message": "checkout failed for request req-1",
+                    "timestamp": "2026-07-04T10:00:00Z",
+                    "component": "checkout",
+                    "level": "ERROR",
+                    "event_id": None,
+                    "source_file": "api",
+                    "line_number": 1,
+                }
+            ],
+            client=client,
+            model=FakeModel(),
+            batch_size=32,
+        )
+
+        row = client.rows[0]
+        self.assertTrue(row["payload"]["candidate_id"].startswith("template::payment-prod::"))
+        self.assertEqual(row["payload"]["candidate_id"], row["payload"]["template_id"])
+        self.assertIn("candidate_id", row["payload"]["embed_text"])
 
     def test_process_records_attaches_anomaly_payload_when_enabled(self) -> None:
         class FakeVector:
@@ -354,6 +407,10 @@ class KafkaWorkerTest(unittest.TestCase):
         self.assertIn("new_template_for_service", payload["anomaly"]["reasons"])
         self.assertIn("anomaly_score", payload)
         self.assertIn("anomaly_components", payload)
+        self.assertIn("apache:20", result.index_updates)
+        self.assertEqual(result.index_updates["apache:20"]["anomaly_baseline_status"], "ready")
+        self.assertIn("anomaly_score", result.index_updates["apache:20"])
+        self.assertIn("new_template_for_service", result.index_updates["apache:20"]["anomaly_reasons"])
 
 
 if __name__ == "__main__":

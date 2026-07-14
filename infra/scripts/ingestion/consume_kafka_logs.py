@@ -7,7 +7,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -37,7 +37,6 @@ from src.ingestion.kafka_contract import (
     DEFAULT_RAW_TOPIC,
     build_failed_message,
     normalize_raw_log_payload,
-    partition_key_for_log,
 )
 from src.ingestion.raw_log_store import OpenSearchRawLogStore, RawLogStoreError
 
@@ -61,6 +60,7 @@ class Producer(Protocol):
 class IngestionBatchResult:
     processed: int
     failed: int
+    index_updates: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +131,28 @@ def process_records(
     rows = build_upsert_rows(chunks)
     embed_rows(rows, model, batch_size)
     upsert_rows(client, LOG_LINE_COLLECTION, rows, batch_size)
-    return IngestionBatchResult(processed=len(records), failed=0)
+    index_updates = {}
+    for chunk in chunks:
+        metadata = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+        log_id = str(chunk.get("log_id") or "")
+        if log_id:
+            update_fields = {
+                "candidate_id": metadata.get("candidate_id"),
+                "template_id": metadata.get("template_id"),
+                "template": metadata.get("template"),
+                "template_match_status": metadata.get("template_match_status"),
+                "anomaly": chunk.get("anomaly"),
+                "anomaly_score": chunk.get("anomaly_score"),
+                "anomaly_level": chunk.get("anomaly_level"),
+                "anomaly_decision": chunk.get("anomaly_decision"),
+                "anomaly_baseline_status": chunk.get("anomaly_baseline_status"),
+                "anomaly_reasons": chunk.get("anomaly_reasons"),
+                "anomaly_components": chunk.get("anomaly_components"),
+            }
+            index_updates[log_id] = {
+                key: value for key, value in update_fields.items() if value is not None
+            }
+    return IngestionBatchResult(processed=len(records), failed=0, index_updates=index_updates)
 
 
 def enrich_chunks_with_anomaly(
@@ -185,7 +206,7 @@ def process_kafka_batch(
         except Exception as exc:
             mark_raw_logs(records, raw_log_store, index_status="failed", index_error=str(exc))
             raise
-        mark_raw_logs(records, raw_log_store, index_status="indexed")
+        mark_raw_logs(records, raw_log_store, index_status="indexed", index_updates=result.index_updates)
         processed = int(result.processed)
         failed += int(result.failed)
 
@@ -199,6 +220,7 @@ def mark_raw_logs(
     *,
     index_status: str,
     index_error: str | None = None,
+    index_updates: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     if raw_log_store is None:
         return
@@ -207,7 +229,12 @@ def mark_raw_logs(
         if not log_id:
             continue
         try:
-            raw_log_store.update_index_status(log_id, index_status=index_status, index_error=index_error)
+            raw_log_store.update_index_status(
+                log_id,
+                index_status=index_status,
+                index_error=index_error,
+                extra_fields=(index_updates or {}).get(log_id),
+            )
         except RawLogStoreError as exc:
             print(f"raw log status update failed log_id={log_id}: {exc}", file=sys.stderr)
 

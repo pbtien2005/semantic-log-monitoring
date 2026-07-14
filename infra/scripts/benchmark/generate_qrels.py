@@ -9,13 +9,13 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+sys.path.append(str(Path(__file__).resolve().parents[3]))
 
 from src.benchmark.query_bank import QUERY_BANK, QuerySpec
 from src.core.io_utils import benchmark_dir, ensure_dir, read_jsonl, write_jsonl

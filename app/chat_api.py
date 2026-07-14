@@ -19,15 +19,25 @@ from src.ingestion.raw_log_store import OpenSearchRawLogStore, RawLogStoreError
 raw_log_store = OpenSearchRawLogStore()
 
 
+async def read_json_object(request: Request) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, JSONResponse({"error": "invalid json"}, status_code=400)
+    if not isinstance(payload, dict):
+        return None, JSONResponse({"error": "json payload must be an object"}, status_code=400)
+    return payload, None
+
+
 async def health(_: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
 async def chat(request: Request) -> JSONResponse:
-    try:
-        payload: dict[str, Any] = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse({"error": "invalid json"}, status_code=400)
+    payload, error = await read_json_object(request)
+    if error:
+        return error
+    assert payload is not None
 
     query = str(payload.get("query") or "").strip()
     if not query:
@@ -46,10 +56,10 @@ async def chat(request: Request) -> JSONResponse:
 
 
 async def ingest_logs(request: Request) -> JSONResponse:
-    try:
-        payload: dict[str, Any] = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return JSONResponse({"error": "invalid json"}, status_code=400)
+    payload, error = await read_json_object(request)
+    if error:
+        return error
+    assert payload is not None
 
     try:
         normalized = normalize_raw_log_payload(payload)

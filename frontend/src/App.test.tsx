@@ -155,6 +155,191 @@ describe("Semantic log React dashboard", () => {
     );
   });
 
+  it("hides watch-only rows from anomaly badges and RCA actions", async () => {
+    render(<App />);
+
+    await screen.findByText("compute queue is backing up before timeout");
+    const watchRow = screen.getByText("compute queue is backing up before timeout").closest("article");
+
+    expect(screen.queryByText("WATCH")).not.toBeInTheDocument();
+    expect(watchRow?.querySelector(".anomaly-signal")).toBeInTheDocument();
+    expect(watchRow).not.toHaveClass("has-anomaly");
+    expect(watchRow).not.toHaveClass("anomaly-medium");
+    expect(screen.queryByRole("button", { name: /RCA for anomaly openstack-0/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /RCA for anomaly openstack-1/i })).toBeInTheDocument();
+  });
+
+  it("shows RCA for error watch rows with investigative anomaly reasons", async () => {
+    const rcaPayload = {
+      logs: [
+        {
+          dataset: "hdfs",
+          timestamp: "260709 103050",
+          level: "ERROR",
+          service: "hdfs-datanode",
+          message: "Got exception while serving blk_9000000000000000420",
+          rawLog: "ERROR Got exception while serving blk_9000000000000000420",
+          log_id: "hdfs:error-watch",
+          template_id: "hdfs::E4",
+          anomaly_score: 0.64,
+          anomaly_level: "medium",
+          anomaly_decision: "watch",
+          anomaly_baseline_status: "ready",
+          anomaly_reasons: ["new_template_transition", "error_severity_hint"]
+        },
+        {
+          dataset: "hdfs",
+          timestamp: "260709 103049",
+          level: "WARN",
+          service: "hdfs-datanode",
+          message: "Slow packet responder for block",
+          rawLog: "WARN Slow packet responder for block",
+          log_id: "hdfs:warn-watch",
+          template_id: "hdfs::E9",
+          anomaly_score: 0.74,
+          anomaly_level: "medium",
+          anomaly_decision: "watch",
+          anomaly_baseline_status: "ready",
+          anomaly_reasons: ["new_template_for_service"]
+        }
+      ]
+    };
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/chat") {
+        return {
+          ok: true,
+          json: async () => ({
+            answer: "RCA ok",
+            source: "rca"
+          })
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => rcaPayload
+      } as Response;
+    });
+
+    render(<App />);
+
+    await screen.findByText("Got exception while serving blk_9000000000000000420");
+    const rcaWatchRow = screen.getByText("Got exception while serving blk_9000000000000000420").closest("article");
+    const warnWatchRow = screen.getByText("Slow packet responder for block").closest("article");
+
+    expect(screen.queryByText("WATCH")).not.toBeInTheDocument();
+    expect(rcaWatchRow).toHaveClass("rca-worthy");
+    expect(rcaWatchRow?.querySelector(".anomaly-signal")).toBeInTheDocument();
+    expect(warnWatchRow).not.toHaveClass("rca-worthy");
+    expect(warnWatchRow?.querySelector(".anomaly-signal")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /RCA for anomaly hdfs:error-watch/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /RCA for anomaly hdfs:warn-watch/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /RCA for anomaly hdfs:error-watch/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/RCA anomaly log_id=hdfs:error-watch/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows embedding and Milvus indexing status for live log rows", async () => {
+    const indexingPayload = {
+      logs: [
+        {
+          dataset: "hdfs",
+          timestamp: "260709 103050",
+          level: "INFO",
+          service: "dfs.DataNode",
+          message: "PacketResponder finished for block",
+          rawLog: "INFO PacketResponder finished for block",
+          log_id: "hdfs-indexed",
+          index_status: "indexed",
+          indexed_at: "2026-07-13T09:30:00Z"
+        },
+        {
+          dataset: "hdfs",
+          timestamp: "260709 103051",
+          level: "WARN",
+          service: "dfs.DataNode",
+          message: "Waiting for embedding worker",
+          rawLog: "WARN Waiting for embedding worker",
+          log_id: "hdfs-pending",
+          index_status: "pending"
+        },
+        {
+          dataset: "hdfs",
+          timestamp: "260709 103052",
+          level: "ERROR",
+          service: "dfs.DataNode",
+          message: "Milvus upsert failed",
+          rawLog: "ERROR Milvus upsert failed",
+          log_id: "hdfs-failed",
+          index_status: "failed",
+          index_error: "Milvus insert failed"
+        }
+      ]
+    };
+    vi.mocked(fetch).mockImplementation(async () => ({
+      ok: true,
+      json: async () => indexingPayload
+    }) as Response);
+
+    render(<App />);
+
+    await screen.findByText("PacketResponder finished for block");
+
+    expect(screen.getByLabelText(/Milvus indexed/i)).toHaveTextContent("Milvus");
+    expect(screen.getByLabelText(/Embedding pending/i)).toHaveTextContent("Embedding");
+    expect(screen.getByLabelText(/Milvus index failed/i)).toHaveTextContent("Index lỗi");
+    expect(screen.getByLabelText(/Milvus index failed/i)).toHaveAttribute(
+      "title",
+      expect.stringContaining("Milvus insert failed")
+    );
+  });
+
+  it("keeps previous real-time logs available behind a vertical scrollbar", async () => {
+    const manyLogsPayload = {
+      logs: Array.from({ length: 15 }, (_, index) => ({
+        dataset: "hdfs",
+        timestamp: `2008-11-09 20:35:${String(index).padStart(2, "0")}.000`,
+        level: index % 5 === 0 ? "ERROR" : "INFO",
+        service: "dfs.DataNode",
+        message: `live hdfs log ${index}`,
+        rawLog: `INFO dfs.DataNode live hdfs log ${index}`,
+        log_id: `hdfs-live-${index}`,
+        template_id: "T_LIVE"
+      }))
+    };
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/chat") {
+        return {
+          ok: true,
+          json: async () => ({
+            answer: "ok",
+            source: "rag"
+          })
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => manyLogsPayload
+      } as Response;
+    });
+
+    render(<App />);
+
+    await screen.findByText("live hdfs log 14");
+    expect(screen.queryByLabelText("Số log hiển thị")).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText("live log row")).toHaveLength(15);
+
+    const styles = readFileSync(resolve(__dirname, "styles.css"), "utf-8");
+    const streamRule = styles.match(/\.live-log-panel\s+\.log-stream\s*\{[^}]+\}/)?.[0] ?? "";
+
+    expect(streamRule).toContain("overflow-y: auto");
+    expect(streamRule).toContain("max-height: 520px");
+  });
+
   it("places traffic below live logs and removes resource telemetry", async () => {
     render(<App />);
 

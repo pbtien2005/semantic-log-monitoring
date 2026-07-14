@@ -426,7 +426,7 @@ def print_summary(dataset: str, logs: list[dict[str, Any]], line_chunks: list[di
     print(f"Logs/line chunks/catalog templates: {len(logs)}/{len(line_chunks)}/{len(template_chunks)}")
     print(f"Line count match: {'PASS' if len(logs) == len(line_chunks) else 'FAIL'}")
     print(f"Matched/unmatched: {metrics['matched_template_count']}/{metrics['unmatched_template_count']} ({metrics['unmatched_template_ratio']} unmatched)")
-    print(f"Raw pattern leakage: " + ", ".join(f"{name}={len(chunks)}" for name, chunks in raw_hits.items()))
+    print("Raw pattern leakage: " + ", ".join(f"{name}={len(chunks)}" for name, chunks in raw_hits.items()))
     print(f"Suspicious templates: {len(suspicious)}")
     print(f"Report: {report_path}")
 

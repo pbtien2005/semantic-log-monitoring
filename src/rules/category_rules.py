@@ -499,9 +499,13 @@ def _apply_service_context(result: ScoredCategoryResult, text: str) -> None:
                 result.matched_negative_patterns.append("normal lifecycle event")
 
 
-def score_log(dataset: str, category: str, log: dict[str, Any]) -> ScoredCategoryResult:
-    text = log_text(log)
-    result = _base_score(category, text)
+def _apply_category_adjustments(
+    dataset: str,
+    category: str,
+    log: dict[str, Any],
+    text: str,
+    result: ScoredCategoryResult,
+) -> None:
     if category == "latency":
         _apply_latency_numeric(result, text)
     elif category == "storage":
@@ -512,26 +516,41 @@ def score_log(dataset: str, category: str, log: dict[str, Any]) -> ScoredCategor
         result.score += 2
         result.matched_weak_patterns.append(f"level={log.get('level')}")
 
-    if result.matched_negative_patterns and result.score < scoring_profile(category).min_score_for_positive:
-        result.reason = "hard_negative: " + ", ".join(result.matched_negative_patterns[:3])
-    elif result.label(scoring_profile(category)) == "positive":
-        if result.numeric_evidence and category == "latency":
-            result.reason = f"positive: {result.numeric_evidence}"
-        elif category == "storage" and "block+issue" in result.matched_strong_patterns:
-            result.reason = "positive: storage pattern block + exception/failure context"
-        else:
-            patterns = result.matched_strong_patterns or result.matched_weak_patterns
-            result.reason = "positive: matched strong pattern " + ", ".join(patterns[:3])
-    elif result.label(scoring_profile(category)) == "uncertain":
-        if result.numeric_evidence:
-            result.reason = f"uncertain: {result.numeric_evidence}"
-        elif result.weak_only:
-            result.reason = "uncertain: weak pattern only"
-        else:
-            result.reason = "uncertain: below positive threshold"
-    else:
-        if category == "latency" and result.numeric_evidence:
-            result.reason = f"hard_negative: {result.numeric_evidence}"
-        else:
-            result.reason = "no category evidence above threshold"
+
+def _positive_reason(category: str, result: ScoredCategoryResult) -> str:
+    if result.numeric_evidence and category == "latency":
+        return f"positive: {result.numeric_evidence}"
+    if category == "storage" and "block+issue" in result.matched_strong_patterns:
+        return "positive: storage pattern block + exception/failure context"
+    patterns = result.matched_strong_patterns or result.matched_weak_patterns
+    return "positive: matched strong pattern " + ", ".join(patterns[:3])
+
+
+def _uncertain_reason(result: ScoredCategoryResult) -> str:
+    if result.numeric_evidence:
+        return f"uncertain: {result.numeric_evidence}"
+    if result.weak_only:
+        return "uncertain: weak pattern only"
+    return "uncertain: below positive threshold"
+
+
+def _score_reason(category: str, result: ScoredCategoryResult) -> str:
+    profile = scoring_profile(category)
+    if result.matched_negative_patterns and result.score < profile.min_score_for_positive:
+        return "hard_negative: " + ", ".join(result.matched_negative_patterns[:3])
+    label = result.label(profile)
+    if label == "positive":
+        return _positive_reason(category, result)
+    if label == "uncertain":
+        return _uncertain_reason(result)
+    if category == "latency" and result.numeric_evidence:
+        return f"hard_negative: {result.numeric_evidence}"
+    return "no category evidence above threshold"
+
+
+def score_log(dataset: str, category: str, log: dict[str, Any]) -> ScoredCategoryResult:
+    text = log_text(log)
+    result = _base_score(category, text)
+    _apply_category_adjustments(dataset, category, log, text, result)
+    result.reason = _score_reason(category, result)
     return result

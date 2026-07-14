@@ -61,6 +61,28 @@ def template_result(template_id: str, template: str) -> RetrievalResult:
     )
 
 
+def pending_template_result(candidate_id: str, template: str) -> RetrievalResult:
+    return RetrievalResult(
+        collection="template",
+        primary_id=candidate_id,
+        score=0.7,
+        semantic_score=0.7,
+        source="pending_template_registry",
+        entity={
+            "template_id": candidate_id,
+            "candidate_id": candidate_id,
+            "dataset": "payment-prod",
+            "occurrences": 5,
+            "payload": {
+                "template": template,
+                "draft_regex": "checkout failed.*",
+                "status": "pending",
+                "searchable": True,
+            },
+        },
+    )
+
+
 class ContextBuilderTests(unittest.TestCase):
     def build_context(self) -> dict[str, Any]:
         plan = RetrievalPlan(
@@ -183,7 +205,53 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertEqual(context["logs"][0]["template_ref"], "T01")
         self.assertEqual(context["template_map"][0]["template_id"], "template::openstack::new")
         self.assertEqual(context["template_map"][0]["template"], "new scheduler failure")
-        self.assertEqual(context["template_map"][0]["signals"], ["scheduler_failure"])
+        self.assertNotIn("signals", context["logs"][0])
+        self.assertNotIn("signals", context["template_map"][0])
+
+    def test_context_marks_pending_template_candidates(self) -> None:
+        candidate_id = "template::payment-prod::checkout"
+        plan = RetrievalPlan(
+            raw_query="checkout failed",
+            normalized_query="checkout failed",
+            semantic_query="checkout failed",
+            dataset="payment-prod",
+            top_k=5,
+        )
+        response = RetrievalResponse(
+            mode="filtered_vector",
+            filter_expr='dataset == "payment-prod" and payload["candidate_id"] == "template::payment-prod::checkout"',
+            log_lines=[
+                RetrievalResult(
+                    collection="log_line",
+                    primary_id="log-new",
+                    score=0.8,
+                    semantic_score=0.8,
+                    source="candidate_filtered",
+                    entity={
+                        "log_id": "log-new",
+                        "dataset": "payment-prod",
+                        "template_id": candidate_id,
+                        "timestamp_ms": 1000,
+                        "payload": {
+                            "candidate_id": candidate_id,
+                            "raw_log": "checkout failed for request req-1",
+                            "template_id": candidate_id,
+                            "template": "checkout failed for request <req_id>",
+                        },
+                    },
+                )
+            ],
+            templates=[pending_template_result(candidate_id, "checkout failed for request <req_id>")],
+        )
+
+        context = build_retrieval_context(query=plan.raw_query, plan=plan, response=response)
+
+        self.assertEqual(context["templates"][0]["template_id"], candidate_id)
+        self.assertEqual(context["templates"][0]["candidate_id"], candidate_id)
+        self.assertEqual(context["templates"][0]["status"], "pending")
+        self.assertEqual(context["templates"][0]["source"], "pending_template_registry")
+        self.assertEqual(context["logs"][0]["candidate_id"], candidate_id)
+        self.assertEqual(context["template_map"][0]["status"], "pending")
 
 
 if __name__ == "__main__":

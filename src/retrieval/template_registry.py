@@ -26,7 +26,6 @@ class TemplateRecord:
     component: str | None
     template: str
     search_text: str
-    signals: list[str]
     occurrences: int
     sample_messages: list[str]
     metadata: dict[str, Any]
@@ -41,7 +40,6 @@ class TemplateHit:
     component: str | None
     template: str
     search_text: str
-    signals: list[str]
     occurrences: int
     sample_messages: list[str]
     metadata: dict[str, Any]
@@ -63,9 +61,6 @@ def record_from_dict(record: dict[str, Any]) -> TemplateRecord:
         key: record.get(key)
         for key in (
             "regex",
-            "intent",
-            "event_type",
-            "event_family",
             "priority",
             "active",
             "vector_index",
@@ -84,7 +79,6 @@ def record_from_dict(record: dict[str, Any]) -> TemplateRecord:
         or payload.get("embed_text")
         or template
     )
-    signals = record.get("signals") or metadata.get("signals") or payload.get("signals") or []
     sample_messages = (
         record.get("sample_messages")
         or metadata.get("sample_messages")
@@ -104,7 +98,6 @@ def record_from_dict(record: dict[str, Any]) -> TemplateRecord:
         component=record.get("component"),
         template=template,
         search_text=search_text,
-        signals=[str(signal) for signal in signals],
         occurrences=int(occurrences),
         sample_messages=[str(message) for message in sample_messages],
         metadata={**payload, **metadata, **passthrough_metadata},
@@ -120,7 +113,6 @@ def hit_from_record(record: TemplateRecord, *, score: float, filter_mode: str) -
         component=record.component,
         template=record.template,
         search_text=record.search_text,
-        signals=record.signals,
         occurrences=record.occurrences,
         sample_messages=record.sample_messages,
         metadata=record.metadata,

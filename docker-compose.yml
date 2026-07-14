@@ -30,6 +30,8 @@ services:
         condition: service_completed_successfully
       opensearch:
         condition: service_healthy
+    volumes:
+      - template-data:/app/data/templates
 
   semantic-worker:
     build:
@@ -46,6 +48,8 @@ services:
       INGESTION_FLUSH_INTERVAL_SECONDS: ${INGESTION_FLUSH_INTERVAL_SECONDS:-2}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
       EMBEDDING_MODEL: intfloat/multilingual-e5-base
+      ANOMALY_ENABLED: ${ANOMALY_ENABLED:-true}
+      ANOMALY_BASELINE_PATH: ${ANOMALY_BASELINE_PATH:-data/anomaly/baselines/hdfs/baseline.json}
       RAW_LOG_STORE_URL: http://opensearch:9200
       RAW_LOG_INDEX: semantic-raw-logs
     depends_on:
@@ -55,6 +59,8 @@ services:
         condition: service_healthy
       opensearch:
         condition: service_healthy
+    volumes:
+      - template-data:/app/data/templates
 
   opensearch:
     image: opensearchproject/opensearch:2.15.0
@@ -182,3 +188,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+
+volumes:
+  template-data:
