@@ -12,3 +12,4 @@ infra/opensearch/data/
 infra/cliproxyapi/auth/
 .env
 .env.*
+IMPLEMENT_PLAN.md
